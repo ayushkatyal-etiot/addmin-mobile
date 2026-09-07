@@ -1,0 +1,20 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+run_mode = "nonconcurrent"
+
+[scripts.run.expo-start-android]
+available_in = [ "local" ]
+command = "npx expo start --android"
+icon = "play"
+default = true
+
+[scripts.run.rn-run-android]
+available_in = [ "local" ]
+command = "npx react-native run-android"
+icon = "smartphone"
+
+[scripts.run.expo-run-android-device]
+available_in = [ "local" ]
+command = "npx expo run:android -d"
+icon = "tablet-smartphone"
