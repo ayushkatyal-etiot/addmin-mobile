@@ -39,6 +39,8 @@
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
+    "android:rn-run": "react-native run-android",
+    "android:device": "expo run:android -d",
     "ios": "expo start --ios",
     "web": "expo start --web"
   },
