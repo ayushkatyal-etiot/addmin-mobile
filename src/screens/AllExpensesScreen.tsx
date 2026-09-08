@@ -292,7 +292,7 @@ export default function AllExpensesScreen({
         )}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: Math.max(insets.bottom, space[6]) }]} onPress={onAddExpense}>
+      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={onAddExpense}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 

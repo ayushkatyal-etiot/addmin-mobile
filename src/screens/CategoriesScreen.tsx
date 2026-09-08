@@ -227,7 +227,7 @@ export default function CategoriesScreen({ onBack }: { onBack: () => void }) {
         )}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: Math.max(insets.bottom, space[6]) }]}>
+      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
