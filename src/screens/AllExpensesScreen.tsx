@@ -583,6 +583,7 @@ const styles = StyleSheet.create({
   },
   chipRow: {
     marginTop: space[3],
+    marginBottom: space[3],
     flexGrow: 0,
   },
   chipRowContent: {

@@ -388,7 +388,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, alignItems: 'center', justifyContent: 'center',
   },
 
-  chipRow: { marginTop: space[3], flexGrow: 0 },
+  chipRow: { marginTop: space[3], marginBottom: space[3], flexGrow: 0 },
   chipRowContent: { gap: space[2], paddingHorizontal: space[6] },
   chip: {
     height: 28, paddingHorizontal: space[3], borderRadius: radius.full, borderWidth: 1,
