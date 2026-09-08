@@ -39,6 +39,23 @@ export const colors = {
   greenStatus500: '#2e8b5b',
   greenStatus600: '#236b46',
   greenStatus100: '#d9f0e2',
+
+  viz1: '#1a8956',
+  viz2: '#2b7bb8',
+  viz3: '#b9791a',
+  viz4: '#7d5cc2',
+  viz5: '#c23b3b',
+  viz6: '#5c656c',
+} as const;
+
+// viz colors mixed 16% into --bg-raised (white), precomputed since RN has no color-mix().
+export const vizTint = {
+  viz1: '#daece4',
+  viz2: '#ddeaf4',
+  viz3: '#f4eada',
+  viz4: '#eae5f5',
+  viz5: '#f5e0e0',
+  viz6: '#e5e6e7',
 } as const;
 
 export const theme = {

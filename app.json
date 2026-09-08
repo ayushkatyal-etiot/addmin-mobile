@@ -35,6 +35,16 @@
           "image": "./assets/images/addmin-logo.png",
           "imageWidth": 150
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "targetSdkVersion": 37,
+            "compileSdkVersion": 37,
+            "navigationBarColor": "#212121"
+          }
+        }
       ]
     ]
   }
