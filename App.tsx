@@ -22,6 +22,8 @@ import DashboardScreen from './src/screens/DashboardScreen';
 import AllExpensesScreen from './src/screens/AllExpensesScreen';
 import AddExpenseScreen from './src/screens/AddExpenseScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
+import AddCategoryScreen from './src/screens/AddCategoryScreen';
+import VendorsScreen from './src/screens/VendorsScreen';
 import StubScreen from './src/screens/StubScreen';
 import BottomNav from './src/components/BottomNav';
 
@@ -33,6 +35,8 @@ export type RootStackParamList = {
   AllExpenses: undefined;
   AddExpense: undefined;
   Categories: undefined;
+  AddCategory: undefined;
+  Vendors: undefined;
 };
 
 export type MainTabParamList = {
@@ -106,7 +110,18 @@ export default function App() {
                 {({ navigation }) => <AddExpenseScreen onBack={() => navigation.goBack()} />}
               </Stack.Screen>
               <Stack.Screen name="Categories">
-                {({ navigation }) => <CategoriesScreen onBack={() => navigation.goBack()} />}
+                {({ navigation }) => (
+                  <CategoriesScreen
+                    onBack={() => navigation.goBack()}
+                    onAddCategory={() => navigation.navigate('AddCategory')}
+                  />
+                )}
+              </Stack.Screen>
+              <Stack.Screen name="AddCategory">
+                {({ navigation }) => <AddCategoryScreen onBack={() => navigation.goBack()} />}
+              </Stack.Screen>
+              <Stack.Screen name="Vendors">
+                {({ navigation }) => <VendorsScreen onBack={() => navigation.goBack()} />}
               </Stack.Screen>
             </Stack.Navigator>
           </NavigationContainer>

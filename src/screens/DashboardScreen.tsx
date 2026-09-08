@@ -108,6 +108,7 @@ const SECTION_GROUPS: SectionGroup[] = [
         subtitle: 'Vendor directory and contact details',
         color: colors.viz2,
         tint: vizTint.viz2,
+        screen: 'Vendors',
       },
     ],
   },

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   FlatList,
+  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -10,91 +11,87 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as Clipboard from 'expo-clipboard';
 import {
   ArrowUpDown,
   Check,
   ChevronDown,
   ChevronLeft,
-  Folder,
+  Copy,
+  Mail,
+  MapPin,
   Pencil,
+  Phone,
   Plus,
-  Power,
   Search,
   Trash2,
+  Truck,
   X,
 } from 'lucide-react-native';
 
 import { radius, space, theme } from '../theme/tokens';
 
-type Category = {
+type Vendor = {
   id: string;
   code: string;
   name: string;
-  description: string;
-  fullDescription: string;
+  city: string;
   active: boolean;
-  parent: string | null;
+  email: string;
+  phone: string;
+  gstNumber: string | null;
   createdAt: string;
-  updatedAt: string;
   inUseCount: number;
 };
 
-const CATEGORIES: Category[] = [
+const VENDORS: Vendor[] = [
   {
-    id: 'cat-1', code: 'CAT-001', name: 'Utility',
-    description: 'Electricity, water, gas and other utility bills',
-    fullDescription: 'All recurring and one-time utility connections billed per office, including electricity, water, gas, internet and telephone.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '10/03/2026', inUseCount: 24,
+    id: 'vnd-1', code: 'VND-001', name: 'Sharma Facility Services', city: 'Mumbai', active: true,
+    email: 'contact@sharmafacility.in', phone: '+91 98200 12345', gstNumber: '27AABCS1429B1ZQ',
+    createdAt: '02/08/2022', inUseCount: 12,
   },
   {
-    id: 'cat-2', code: 'CAT-002', name: 'Rent & Lease',
-    description: 'Office and warehouse rent, lease renewals',
-    fullDescription: 'Covers rent, common area maintenance charges and lease renewal costs across all office and warehouse properties held under the tenant.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '14/06/2026', inUseCount: 0,
+    id: 'vnd-2', code: 'VND-002', name: 'Blue Star Ltd', city: 'Pune', active: true,
+    email: 'accounts.payable@bluestarindia.com', phone: '+91 22 4567 8901', gstNumber: '27AABCB1234C1ZP',
+    createdAt: '14/03/2024', inUseCount: 0,
   },
   {
-    id: 'cat-3', code: 'CAT-003', name: 'Maintenance',
-    description: 'Repairs, AMC contracts and upkeep',
-    fullDescription: 'Repair work orders, annual maintenance contracts and general upkeep across offices and warehouses.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '12/02/2026', inUseCount: 0,
+    id: 'vnd-3', code: 'VND-003', name: 'Godrej Interio', city: 'Mumbai', active: true,
+    email: 'vendor.support@godrejinterio.com', phone: '+91 22 6796 5500', gstNumber: '27AAACG0057B1Z2',
+    createdAt: '11/05/2023', inUseCount: 0,
   },
   {
-    id: 'cat-4', code: 'CAT-004', name: 'Office Supplies',
-    description: 'Stationery, pantry and consumables',
-    fullDescription: 'Day-to-day stationery, pantry supplies and general office consumables purchased for daily operations.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '05/01/2026', inUseCount: 0,
+    id: 'vnd-4', code: 'VND-004', name: 'Quess Corp', city: 'Bengaluru', active: true,
+    email: 'vendor.ops@quesscorp.com', phone: '+91 80 4567 1234', gstNumber: null,
+    createdAt: '19/11/2023', inUseCount: 0,
   },
   {
-    id: 'cat-5', code: 'CAT-005', name: 'Electricity',
-    description: 'Electricity connection bills across all offices',
-    fullDescription: 'Electricity connection bills across all offices',
-    active: true, parent: 'Utility', createdAt: '02/01/2024', updatedAt: '10/03/2026', inUseCount: 0,
-  },
-  {
-    id: 'cat-11', code: 'CAT-011', name: 'Pantry & Refreshments',
-    description: 'Tea, coffee and snacks for the office pantry',
-    fullDescription: 'Merged into Office Supplies in 2026; retained for historical expenses only.',
-    active: false, parent: 'Office Supplies', createdAt: '18/09/2023', updatedAt: '02/02/2026', inUseCount: 0,
+    id: 'vnd-5', code: 'VND-005', name: 'Nilkamal Ltd', city: 'Ahmedabad', active: false,
+    email: 'sales@nilkamal.com', phone: '+91 79 2630 4040', gstNumber: '24AAACN1234D1Z5',
+    createdAt: '30/01/2021', inUseCount: 0,
   },
 ];
 
-type SortKey = 'nameAsc' | 'nameDesc' | 'recentlyCreated' | 'recentlyUpdated' | 'idAsc';
+type SortKey = 'nameAsc' | 'nameDesc' | 'recentlyAdded' | 'recentlyUpdated' | 'cityAsc' | 'idAsc';
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'nameAsc', label: 'Name — A to Z' },
   { key: 'nameDesc', label: 'Name — Z to A' },
-  { key: 'recentlyCreated', label: 'Recently created' },
+  { key: 'recentlyAdded', label: 'Recently added' },
   { key: 'recentlyUpdated', label: 'Recently updated' },
-  { key: 'idAsc', label: 'Category ID — ascending' },
+  { key: 'cityAsc', label: 'City — A to Z' },
+  { key: 'idAsc', label: 'Vendor ID — ascending' },
 ];
 
-function sortCategories(list: Category[], sortKey: SortKey): Category[] {
+function sortVendors(list: Vendor[], sortKey: SortKey): Vendor[] {
   const sorted = [...list];
   switch (sortKey) {
     case 'nameAsc':
       return sorted.sort((a, b) => a.name.localeCompare(b.name));
     case 'nameDesc':
       return sorted.sort((a, b) => b.name.localeCompare(a.name));
+    case 'cityAsc':
+      return sorted.sort((a, b) => a.city.localeCompare(b.city));
     case 'idAsc':
       return sorted.sort((a, b) => a.code.localeCompare(b.code));
     default:
@@ -102,36 +99,41 @@ function sortCategories(list: Category[], sortKey: SortKey): Category[] {
   }
 }
 
-export default function CategoriesScreen({
-  onBack,
-  onAddCategory,
-}: {
-  onBack: () => void;
-  onAddCategory: () => void;
-}) {
+export default function VendorsScreen({ onBack }: { onBack: () => void }) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('nameAsc');
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
-  const [categories, setCategories] = useState(CATEGORIES);
+  const [vendors, setVendors] = useState(VENDORS);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
-    const byFilter =
-      filter === 'all' ? categories : categories.filter((c) => (filter === 'active' ? c.active : !c.active));
+    const byFilter = filter === 'all' ? vendors : vendors.filter((v) => (filter === 'active' ? v.active : !v.active));
     const q = query.trim().toLowerCase();
     const byQuery = q
       ? byFilter.filter(
-          (c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
+          (v) =>
+            v.name.toLowerCase().includes(q) ||
+            v.code.toLowerCase().includes(q) ||
+            v.city.toLowerCase().includes(q) ||
+            v.email.toLowerCase().includes(q) ||
+            (v.gstNumber ?? '').toLowerCase().includes(q)
         )
       : byFilter;
-    return sortCategories(byQuery, sortKey);
-  }, [categories, filter, query, sortKey]);
+    return sortVendors(byQuery, sortKey);
+  }, [vendors, filter, query, sortKey]);
 
   const isSearching = query.trim().length > 0;
   const isEmpty = filtered.length === 0;
-  const noCategoriesAtAll = categories.length === 0;
+  const noVendorsAtAll = vendors.length === 0;
+
+  const copyGst = async (vendorId: string, gst: string) => {
+    await Clipboard.setStringAsync(gst);
+    setCopiedId(vendorId);
+    setTimeout(() => setCopiedId((current) => (current === vendorId ? null : current)), 1500);
+  };
 
   return (
     <SafeAreaView style={styles.flex} edges={['top', 'bottom', 'left', 'right']}>
@@ -139,10 +141,10 @@ export default function CategoriesScreen({
         <Pressable style={styles.backButton} onPress={onBack}>
           <ChevronLeft size={22} color={theme.textPrimary} strokeWidth={1.75} />
         </Pressable>
-        <Text style={styles.headerTitle}>Categories</Text>
+        <Text style={styles.headerTitle}>Vendors</Text>
       </View>
 
-      {!noCategoriesAtAll ? (
+      {!noVendorsAtAll ? (
         <>
           <View style={styles.searchRow}>
             <View style={[styles.searchBar, isSearching && styles.searchBarActive]}>
@@ -151,7 +153,7 @@ export default function CategoriesScreen({
                 style={styles.searchInput}
                 value={query}
                 onChangeText={setQuery}
-                placeholder="Search categories"
+                placeholder="Search vendors"
                 placeholderTextColor={theme.textTertiary}
               />
               {isSearching ? (
@@ -199,14 +201,14 @@ export default function CategoriesScreen({
             {isSearching ? (
               <>
                 <Search size={36} color={theme.textTertiary} strokeWidth={1.75} />
-                <Text style={styles.emptyTitle}>No categories match "{query.trim()}"</Text>
-                <Text style={styles.emptySubtitle}>Try a different name, ID, or description</Text>
+                <Text style={styles.emptyTitle}>No vendors match "{query.trim()}"</Text>
+                <Text style={styles.emptySubtitle}>Try a different name, ID, city, email or GSTIN</Text>
               </>
             ) : (
               <>
-                <Folder size={40} color={theme.textTertiary} strokeWidth={1.75} />
+                <Truck size={40} color={theme.textTertiary} strokeWidth={1.75} />
                 <Text style={[styles.emptyTitle, styles.emptyTitleLg]}>Nothing here yet</Text>
-                <Text style={styles.emptySubtitle}>No expense categories have been created — tap + to add the first one</Text>
+                <Text style={styles.emptySubtitle}>No vendors have been added — tap + to add the first one</Text>
               </>
             )}
           </View>
@@ -217,23 +219,20 @@ export default function CategoriesScreen({
             contentContainerStyle={styles.listContent}
             ItemSeparatorComponent={() => <View style={{ height: space[3] }} />}
             renderItem={({ item }) => (
-              <CategoryCard
-                category={item}
+              <VendorCard
+                vendor={item}
                 expanded={expandedId === item.id}
+                copied={copiedId === item.id}
                 onToggle={() => setExpandedId((current) => (current === item.id ? null : item.id))}
-                onToggleActive={() =>
-                  setCategories((current) =>
-                    current.map((c) => (c.id === item.id ? { ...c, active: !c.active } : c))
-                  )
-                }
-                onDelete={() => setCategories((current) => current.filter((c) => c.id !== item.id))}
+                onCopyGst={() => item.gstNumber && copyGst(item.id, item.gstNumber)}
+                onDelete={() => setVendors((current) => current.filter((v) => v.id !== item.id))}
               />
             )}
           />
         )}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={onAddCategory}>
+      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
@@ -250,25 +249,25 @@ export default function CategoriesScreen({
   );
 }
 
-function CategoryCard({
-  category, expanded, onToggle, onToggleActive, onDelete,
+function VendorCard({
+  vendor, expanded, copied, onToggle, onCopyGst, onDelete,
 }: {
-  category: Category;
+  vendor: Vendor;
   expanded: boolean;
+  copied: boolean;
   onToggle: () => void;
-  onToggleActive: () => void;
+  onCopyGst: () => void;
   onDelete: () => void;
 }) {
-  const canDelete = category.inUseCount === 0;
+  const canDelete = vendor.inUseCount === 0;
 
   return (
     <View style={styles.card}>
       <Pressable onPress={onToggle}>
-        {category.parent ? <Text style={styles.breadcrumb}>{category.parent} ›</Text> : null}
         <View style={styles.cardTopRow}>
           <View style={styles.cardTitleRow}>
-            <Text style={styles.cardTitle} numberOfLines={1}>{category.name}</Text>
-            <Text style={styles.cardCode}>{category.code}</Text>
+            <Text style={styles.cardTitle} numberOfLines={1}>{vendor.name}</Text>
+            <Text style={styles.cardCode}>{vendor.code}</Text>
           </View>
           <ChevronDown
             size={18}
@@ -277,13 +276,14 @@ function CategoryCard({
             style={expanded ? styles.chevronUp : undefined}
           />
         </View>
-        <Text style={styles.cardDescription} numberOfLines={expanded ? undefined : 1}>
-          {category.description}
-        </Text>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusBadge, category.active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
-            <Text style={[styles.statusBadgeText, { color: category.active ? theme.statusSuccessStrong : theme.statusDangerStrong }]}>
-              {category.active ? 'Active' : 'Inactive'}
+        <View style={styles.cardMidRow}>
+          <View style={styles.cityRow}>
+            <MapPin size={14} color={theme.textSecondary} strokeWidth={1.75} />
+            <Text style={styles.cityText}>{vendor.city}</Text>
+          </View>
+          <View style={[styles.statusBadge, vendor.active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
+            <Text style={[styles.statusBadgeText, { color: vendor.active ? theme.statusSuccessStrong : theme.statusDangerStrong }]}>
+              {vendor.active ? 'Active' : 'Inactive'}
             </Text>
           </View>
         </View>
@@ -291,32 +291,54 @@ function CategoryCard({
 
       {expanded ? (
         <View style={styles.details}>
-          <View>
-            <Text style={styles.detailLabel}>Full description</Text>
-            <Text style={styles.detailFullDescription}>{category.fullDescription}</Text>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Email</Text>
+            <Pressable onPress={() => Linking.openURL(`mailto:${vendor.email}`)}>
+              <View style={styles.linkRow}>
+                <Mail size={12} color={theme.textTertiary} strokeWidth={1.75} />
+                <Text style={styles.linkText} numberOfLines={1}>{vendor.email}</Text>
+              </View>
+            </Pressable>
           </View>
-          <View style={styles.detailSpacingTop}>
-            <Text style={styles.detailLabel}>Parent category</Text>
-            <Text style={styles.detailValue}>{category.parent ?? '—'}</Text>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Phone</Text>
+            <Pressable onPress={() => Linking.openURL(`tel:${vendor.phone.replace(/\s+/g, '')}`)}>
+              <View style={styles.linkRow}>
+                <Phone size={12} color={theme.textTertiary} strokeWidth={1.75} />
+                <Text style={styles.linkText}>{vendor.phone}</Text>
+              </View>
+            </Pressable>
           </View>
-          <View style={[styles.detailGrid, styles.detailSpacingTop]}>
-            <View style={styles.detailField}>
-              <Text style={styles.detailLabel}>Created at</Text>
-              <Text style={styles.detailValue}>{category.createdAt}</Text>
-            </View>
-            <View style={styles.detailField}>
-              <Text style={styles.detailLabel}>Updated at</Text>
-              <Text style={styles.detailValue}>{category.updatedAt}</Text>
-            </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>GST Number</Text>
+            {vendor.gstNumber ? (
+              <View style={styles.gstRow}>
+                <Text style={styles.detailValue}>{vendor.gstNumber}</Text>
+                <Pressable style={styles.copyButton} onPress={onCopyGst} hitSlop={8}>
+                  {copied ? (
+                    <Check size={14} color={theme.brandActive} strokeWidth={1.75} />
+                  ) : (
+                    <Copy size={14} color={theme.textSecondary} strokeWidth={1.75} />
+                  )}
+                </Pressable>
+                {copied ? (
+                  <View style={styles.copiedTooltip}>
+                    <Text style={styles.copiedTooltipText}>Copied</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : (
+              <Text style={styles.detailValueMuted}>—</Text>
+            )}
+          </View>
+          <View style={styles.detailRow}>
+            <Text style={styles.detailLabel}>Created at</Text>
+            <Text style={styles.detailValue}>{vendor.createdAt}</Text>
           </View>
           <View style={styles.actionRow}>
             <Pressable style={styles.actionButton}>
               <Pencil size={14} color={theme.textPrimary} strokeWidth={1.75} />
               <Text style={styles.actionButtonText}>Edit</Text>
-            </Pressable>
-            <Pressable style={styles.actionButton} onPress={onToggleActive}>
-              <Power size={14} color={theme.textPrimary} strokeWidth={1.75} />
-              <Text style={styles.actionButtonText}>{category.active ? 'Deactivate' : 'Activate'}</Text>
             </Pressable>
             {canDelete ? (
               <Pressable style={styles.actionButton} onPress={onDelete}>
@@ -326,7 +348,7 @@ function CategoryCard({
             ) : null}
           </View>
           {!canDelete ? (
-            <Text style={styles.inUseText}>In use by {category.inUseCount} expenses — deactivate instead.</Text>
+            <Text style={styles.inUseText}>In use by {vendor.inUseCount} expenses — deactivate instead.</Text>
           ) : null}
         </View>
       ) : null}
@@ -394,8 +416,8 @@ const styles = StyleSheet.create({
     borderRadius: radius.md, alignItems: 'center', justifyContent: 'center',
   },
 
-  chipRow: { marginTop: space[3], marginBottom: space[3], flexGrow: 0 },
-  chipRowContent: { gap: space[2], paddingHorizontal: space[6] },
+  chipRow: { marginTop: space[3], flexGrow: 0 },
+  chipRowContent: { gap: space[2], paddingHorizontal: space[6], paddingBottom: space[2] },
   chip: {
     height: 28, paddingHorizontal: space[3], borderRadius: radius.full, borderWidth: 1,
     borderColor: theme.borderDefault, backgroundColor: theme.bgRaised, alignItems: 'center', justifyContent: 'center',
@@ -413,34 +435,46 @@ const styles = StyleSheet.create({
   emptySubtitle: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, textAlign: 'center' },
 
   card: { backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderSubtle, borderRadius: radius.lg, padding: space[4] },
-  breadcrumb: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginBottom: 2 },
   cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[3] },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'baseline', gap: space[2], flex: 1, minWidth: 0 },
+  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space[2], flex: 1, minWidth: 0 },
   cardTitle: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, flexShrink: 1 },
-  cardCode: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, fontVariant: ['tabular-nums'] },
+  cardCode: {
+    fontSize: 11, fontFamily: 'Urbanist_600SemiBold', color: theme.textSecondary, backgroundColor: theme.bgSunken,
+    height: 18, paddingHorizontal: space[1] + 2, borderRadius: radius.sm, textAlignVertical: 'center',
+    fontVariant: ['tabular-nums'],
+  },
   chevronUp: { transform: [{ rotate: '180deg' }] },
-  cardDescription: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[1] },
-  statusRow: { marginTop: space[2] },
-  statusBadge: { height: 20, paddingHorizontal: space[2], borderRadius: radius.full, alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center' },
+  cardMidRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[3], marginTop: space[1] + 2 },
+  cityRow: { flexDirection: 'row', alignItems: 'center', gap: space[1] },
+  cityText: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
+  statusBadge: { height: 20, paddingHorizontal: space[2], borderRadius: radius.full, alignItems: 'center', justifyContent: 'center' },
   statusBadgeActive: { backgroundColor: theme.statusSuccessBg },
   statusBadgeInactive: { backgroundColor: theme.statusDangerBg },
   statusBadgeText: { fontSize: 12, fontFamily: 'Urbanist_600SemiBold' },
 
-  details: { borderTopWidth: 1, borderTopColor: theme.borderSubtle, marginTop: space[3], paddingTop: space[3] },
-  detailSpacingTop: { marginTop: space[3] },
+  details: { borderTopWidth: 1, borderTopColor: theme.borderSubtle, marginTop: space[3], paddingTop: space[3], gap: space[3] },
+  detailRow: {},
+  detailLabelRow: { flexDirection: 'row', alignItems: 'center', gap: space[1] },
   detailLabel: { fontSize: 12, fontFamily: 'Urbanist_500Medium', color: theme.textTertiary },
-  detailValue: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, marginTop: 2 },
-  detailFullDescription: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, marginTop: 2, lineHeight: 18 },
-  detailGrid: { flexDirection: 'row', gap: space[3] },
-  detailField: { flex: 1 },
+  detailValue: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, marginTop: 2, fontVariant: ['tabular-nums'] },
+  detailValueMuted: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textTertiary, marginTop: 2 },
+  linkRow: { flexDirection: 'row', alignItems: 'center', gap: space[1], marginTop: 2 },
+  linkText: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.brandActive },
+  gstRow: { flexDirection: 'row', alignItems: 'center', gap: space[2], marginTop: 2 },
+  copyButton: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  copiedTooltip: {
+    position: 'absolute', left: 0, top: -32, backgroundColor: theme.textPrimary,
+    paddingHorizontal: space[2], paddingVertical: 4, borderRadius: radius.sm,
+  },
+  copiedTooltipText: { fontSize: 11, fontFamily: 'Urbanist_600SemiBold', color: theme.textInverse },
 
-  actionRow: { flexDirection: 'row', gap: space[2], marginTop: space[4] },
+  actionRow: { flexDirection: 'row', gap: space[2] },
   actionButton: {
     height: 32, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
     borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: space[1] + 2,
   },
   actionButtonText: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  inUseText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[2] },
+  inUseText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
 
   fab: {
     position: 'absolute', right: space[5], width: 56, height: 56, borderRadius: radius.xl,
