@@ -181,6 +181,7 @@ export default function AllExpensesScreen({
   onBack: () => void;
   onAddExpense: () => void;
 }) {
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -291,7 +292,7 @@ export default function AllExpensesScreen({
         )}
       </View>
 
-      <Pressable style={styles.fab} onPress={onAddExpense}>
+      <Pressable style={[styles.fab, { bottom: Math.max(insets.bottom, space[6]) }]} onPress={onAddExpense}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
@@ -771,7 +772,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: space[5],
-    bottom: space[10],
     width: 56,
     height: 56,
     borderRadius: radius.xl,

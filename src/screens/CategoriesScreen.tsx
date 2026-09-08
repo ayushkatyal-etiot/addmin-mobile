@@ -103,6 +103,7 @@ function sortCategories(list: Category[], sortKey: SortKey): Category[] {
 }
 
 export default function CategoriesScreen({ onBack }: { onBack: () => void }) {
+  const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -226,7 +227,7 @@ export default function CategoriesScreen({ onBack }: { onBack: () => void }) {
         )}
       </View>
 
-      <Pressable style={styles.fab}>
+      <Pressable style={[styles.fab, { bottom: Math.max(insets.bottom, space[6]) }]}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
@@ -436,7 +437,7 @@ const styles = StyleSheet.create({
   inUseText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[2] },
 
   fab: {
-    position: 'absolute', right: space[5], bottom: space[6], width: 56, height: 56, borderRadius: radius.xl,
+    position: 'absolute', right: space[5], width: 56, height: 56, borderRadius: radius.xl,
     backgroundColor: theme.brandDefault, alignItems: 'center', justifyContent: 'center',
     shadowColor: '#080a0b', shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 4,
   },
