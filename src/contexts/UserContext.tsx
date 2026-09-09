@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { User, Organisation, Branch, CurrentContext, UserState } from '../types/user';
 
 const USER_KEY = 'user_data';
-const ORGANISATIONS_KEY = 'organisations_data';
-const CURRENT_CONTEXT_KEY = 'current_context_data';
+
+// Simple in-memory storage fallback for managed Expo
+const memoryStorage: Record<string, string> = {};
 
 interface UserContextType extends UserState {
   setUser: (user: User) => Promise<void>;
@@ -29,7 +29,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const restoreUser = async () => {
     try {
-      const userData = await AsyncStorage.getItem(USER_KEY);
+      const userData = memoryStorage[USER_KEY];
       if (userData) {
         const user = JSON.parse(userData) as User;
         setState({
@@ -53,11 +53,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const setUser = async (user: User) => {
     try {
-      await Promise.all([
-        AsyncStorage.setItem(USER_KEY, JSON.stringify(user)),
-        AsyncStorage.setItem(ORGANISATIONS_KEY, JSON.stringify(user.organisations)),
-        AsyncStorage.setItem(CURRENT_CONTEXT_KEY, JSON.stringify(user.current_context)),
-      ]);
+      memoryStorage[USER_KEY] = JSON.stringify(user);
       setState({
         user,
         isLoading: false,
@@ -70,11 +66,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const clearUser = async () => {
     try {
-      await Promise.all([
-        AsyncStorage.removeItem(USER_KEY),
-        AsyncStorage.removeItem(ORGANISATIONS_KEY),
-        AsyncStorage.removeItem(CURRENT_CONTEXT_KEY),
-      ]);
+      delete memoryStorage[USER_KEY];
       setState({
         user: null,
         isLoading: false,
@@ -109,10 +101,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
         ...state.user,
         current_context: context,
       };
-      await Promise.all([
-        AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser)),
-        AsyncStorage.setItem(CURRENT_CONTEXT_KEY, JSON.stringify(context)),
-      ]);
+      memoryStorage[USER_KEY] = JSON.stringify(updatedUser);
       setState({
         user: updatedUser,
         isLoading: false,
