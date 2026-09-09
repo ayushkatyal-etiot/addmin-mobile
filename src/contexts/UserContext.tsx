@@ -1,8 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { createMMKV } from 'react-native-mmkv';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { User, Organisation, Branch, CurrentContext, UserState } from '../types/user';
-
-const storage = createMMKV();
 
 const USER_KEY = 'user_data';
 const ORGANISATIONS_KEY = 'organisations_data';
@@ -31,7 +29,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const restoreUser = async () => {
     try {
-      const userData = storage.getString(USER_KEY);
+      const userData = await AsyncStorage.getItem(USER_KEY);
       if (userData) {
         const user = JSON.parse(userData) as User;
         setState({
@@ -55,9 +53,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const setUser = async (user: User) => {
     try {
-      storage.set(USER_KEY, JSON.stringify(user));
-      storage.set(ORGANISATIONS_KEY, JSON.stringify(user.organisations));
-      storage.set(CURRENT_CONTEXT_KEY, JSON.stringify(user.current_context));
+      await Promise.all([
+        AsyncStorage.setItem(USER_KEY, JSON.stringify(user)),
+        AsyncStorage.setItem(ORGANISATIONS_KEY, JSON.stringify(user.organisations)),
+        AsyncStorage.setItem(CURRENT_CONTEXT_KEY, JSON.stringify(user.current_context)),
+      ]);
       setState({
         user,
         isLoading: false,
@@ -70,9 +70,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
   const clearUser = async () => {
     try {
-      storage.remove(USER_KEY);
-      storage.remove(ORGANISATIONS_KEY);
-      storage.remove(CURRENT_CONTEXT_KEY);
+      await Promise.all([
+        AsyncStorage.removeItem(USER_KEY),
+        AsyncStorage.removeItem(ORGANISATIONS_KEY),
+        AsyncStorage.removeItem(CURRENT_CONTEXT_KEY),
+      ]);
       setState({
         user: null,
         isLoading: false,
@@ -107,8 +109,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
         ...state.user,
         current_context: context,
       };
-      storage.set(USER_KEY, JSON.stringify(updatedUser));
-      storage.set(CURRENT_CONTEXT_KEY, JSON.stringify(context));
+      await Promise.all([
+        AsyncStorage.setItem(USER_KEY, JSON.stringify(updatedUser)),
+        AsyncStorage.setItem(CURRENT_CONTEXT_KEY, JSON.stringify(context)),
+      ]);
       setState({
         user: updatedUser,
         isLoading: false,
