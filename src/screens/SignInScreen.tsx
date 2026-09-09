@@ -174,6 +174,9 @@ export default function SignInScreen({ navigation }: Props) {
                 )}
               </Pressable>
             </View>
+            {form.passwordTouched && form.passwordError && (
+              <Text style={styles.errorText}>{form.passwordError}</Text>
+            )}
             <Pressable style={styles.forgotPassword} hitSlop={8} disabled={isPending}>
               <Text style={styles.forgotPasswordText}>Forgot password?</Text>
             </Pressable>
