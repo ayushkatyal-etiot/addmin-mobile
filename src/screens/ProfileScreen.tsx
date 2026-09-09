@@ -12,6 +12,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { radius, space, theme, type } from '../theme/tokens';
 import type { RootStackParamList } from '../../App';
 import { useAuth } from '../contexts/AuthContext';
+import { useUser } from '../contexts/UserContext';
 import Dialog from '../components/Dialog';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
@@ -20,10 +21,12 @@ export default function ProfileScreen({ navigation }: Props) {
   const [logoutDialogVisible, setLogoutDialogVisible] = useState(false);
   const [errorDialogVisible, setErrorDialogVisible] = useState(false);
   const { logout } = useAuth();
+  const { clearUser } = useUser();
 
   const handleLogoutConfirm = async () => {
     try {
       setLogoutDialogVisible(false);
+      await clearUser();
       await logout();
       // Don't navigate manually - auth state change in AuthContext
       // will trigger RootNavigator to show SignIn automatically

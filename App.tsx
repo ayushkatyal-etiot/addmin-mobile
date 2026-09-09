@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Platform, BackHandler } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { StyleSheet, Platform, BackHandler, AppState, type AppStateStatus } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -18,6 +18,8 @@ import {
   Urbanist_700Bold,
 } from '@expo-google-fonts/urbanist';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { UserProvider } from './src/contexts/UserContext';
+import { useAuthSync } from './src/hooks/useAuthSync';
 
 import SignInScreen from './src/screens/SignInScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
@@ -127,8 +129,34 @@ function RootNavigator() {
   );
 }
 
+function NavigationWrapper() {
+  useAuthSync();
+  return <AppContent />;
+}
+
 function AppContent() {
   const navigationRef = useRef<any>(null);
+  const appState = useRef(AppState.currentState);
+  const [appStateVisible, setAppStateVisible] = useState(appState.current);
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', handleAppStateChange);
+    return () => {
+      subscription.remove();
+    };
+  }, [isAuthenticated]);
+
+  const handleAppStateChange = async (nextAppState: AppStateStatus) => {
+    if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+      // App has come to foreground - refresh user info if logged in
+      if (isAuthenticated) {
+        // Trigger user info refresh (will be handled by a hook in screens)
+      }
+    }
+    appState.current = nextAppState;
+    setAppStateVisible(nextAppState);
+  };
 
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -185,8 +213,10 @@ export default function App() {
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
-              <AppContent />
-              <StatusBar style="light" />
+              <UserProvider>
+                <NavigationWrapper />
+                <StatusBar style="light" />
+              </UserProvider>
             </AuthProvider>
           </QueryClientProvider>
         </SafeAreaProvider>

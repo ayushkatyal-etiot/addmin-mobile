@@ -24,6 +24,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Set up 401 handler for automatic logout on unauthorized
     apiClient.setOnUnauthorized(async () => {
       await logout();
+      // Note: User data (from UserContext) should be cleared separately
+      // This is handled in places that call logout (ProfileScreen, SignInScreen)
     });
   }, []);
 

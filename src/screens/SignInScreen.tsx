@@ -21,6 +21,9 @@ import type { RootStackParamList } from '../../App';
 import { useLogin } from '../api/auth';
 import { useAuth } from '../contexts/AuthContext';
 import { useLoginForm } from '../hooks/useLoginForm';
+import { useGetUserInfo } from '../api/user';
+import { useUser } from '../contexts/UserContext';
+import Toast from '../components/Toast';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SignIn'>;
 
@@ -28,10 +31,14 @@ export default function SignInScreen({ navigation }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
 
   const form = useLoginForm();
   const { mutate: login, isPending } = useLogin();
   const { login: saveToken } = useAuth();
+  const { mutate: getUserInfo } = useGetUserInfo();
+  const { setUser, clearUser } = useUser();
 
   const handleSignIn = async () => {
     form.setEmailTouched(true);
@@ -47,8 +54,24 @@ export default function SignInScreen({ navigation }: Props) {
         onSuccess: async (response) => {
           try {
             await saveToken(response.access_token);
-            // Don't navigate manually - auth state change in AuthContext
-            // will trigger RootNavigator to show Dashboard automatically
+            // Fetch user info
+            getUserInfo(undefined, {
+              onSuccess: async (user) => {
+                try {
+                  await setUser(user);
+                  // Auth state change and user data saved - Dashboard will auto-show
+                } catch (error) {
+                  console.error('Failed to save user info:', error);
+                  form.setFormError('Failed to load user information');
+                }
+              },
+              onError: async (error: any) => {
+                // Clear token and user on fetch failure
+                await clearUser();
+                const message = error?.data?.message || error?.message || 'Failed to load user information';
+                form.setFormError(message);
+              },
+            });
           } catch (error) {
             form.setFormError('Failed to save authentication token');
           }
@@ -215,6 +238,8 @@ export default function SignInScreen({ navigation }: Props) {
           </Pressable>
         </View>
       </KeyboardAwareScrollView>
+
+      <Toast visible={toastVisible} message={toastMessage} type="error" onHide={() => setToastVisible(false)} />
     </SafeAreaView>
   );
 }
