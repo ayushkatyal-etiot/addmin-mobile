@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Platform, BackHandler } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
@@ -128,18 +128,27 @@ function RootNavigator() {
 }
 
 function AppContent() {
+  const navigationRef = useRef<any>(null);
+
   useEffect(() => {
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Close app on back press from home screen
-      BackHandler.exitApp();
-      return true;
+      // Only close app from home tab (Dashboard), allow back navigation elsewhere
+      const state = navigationRef.current?.getRootState();
+      if (state?.type === 'stack') {
+        const currentRouteName = state?.routes?.[state.index]?.name;
+        if (currentRouteName === 'Dashboard') {
+          BackHandler.exitApp();
+          return true;
+        }
+      }
+      return false; // Let default behavior handle navigation back
     });
 
     return () => backHandler.remove();
   }, []);
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <RootNavigator />
     </NavigationContainer>
   );
