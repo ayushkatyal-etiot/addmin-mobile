@@ -7,6 +7,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as SplashScreen from 'expo-splash-screen';
 import SystemNavigationBar from 'react-native-system-navigation-bar';
 import {
@@ -16,6 +17,7 @@ import {
   Urbanist_600SemiBold,
   Urbanist_700Bold,
 } from '@expo-google-fonts/urbanist';
+import { AuthProvider } from './src/contexts/AuthContext';
 
 import SignInScreen from './src/screens/SignInScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
@@ -29,6 +31,8 @@ import StubScreen from './src/screens/StubScreen';
 import BottomNav from './src/components/BottomNav';
 
 SplashScreen.preventAutoHideAsync();
+
+const queryClient = new QueryClient();
 
 export type RootStackParamList = {
   SignIn: undefined;
@@ -84,7 +88,7 @@ export default function App() {
   useEffect(() => {
     onLayoutRootView();
     if (Platform.OS === 'android') {
-      SystemNavigationBar.setBarColor('#212121', false, 'none', 'navigation');
+      SystemNavigationBar.setBarColor('#212121');
     }
   }, [onLayoutRootView]);
 
@@ -96,46 +100,50 @@ export default function App() {
     <GestureHandlerRootView style={styles.flex}>
       <KeyboardProvider>
         <SafeAreaProvider>
-          <NavigationContainer>
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="SignIn" component={SignInScreen} />
-              <Stack.Screen name="Dashboard" component={MainTabs} />
-              <Stack.Screen name="AllExpenses">
-                {({ navigation }) => (
-                  <AllExpensesScreen
-                    onBack={() => navigation.goBack()}
-                    onAddExpense={() => navigation.navigate('AddExpense')}
-                  />
-                )}
-              </Stack.Screen>
-              <Stack.Screen name="AddExpense">
-                {({ navigation }) => <AddExpenseScreen onBack={() => navigation.goBack()} />}
-              </Stack.Screen>
-              <Stack.Screen name="Categories">
-                {({ navigation }) => (
-                  <CategoriesScreen
-                    onBack={() => navigation.goBack()}
-                    onAddCategory={() => navigation.navigate('AddCategory')}
-                  />
-                )}
-              </Stack.Screen>
-              <Stack.Screen name="AddCategory">
-                {({ navigation }) => <AddCategoryScreen onBack={() => navigation.goBack()} />}
-              </Stack.Screen>
-              <Stack.Screen name="Vendors">
-                {({ navigation }) => (
-                  <VendorsScreen
-                    onBack={() => navigation.goBack()}
-                    onAddVendor={() => navigation.navigate('AddVendor')}
-                  />
-                )}
-              </Stack.Screen>
-              <Stack.Screen name="AddVendor">
-                {({ navigation }) => <AddVendorScreen onBack={() => navigation.goBack()} />}
-              </Stack.Screen>
-            </Stack.Navigator>
-          </NavigationContainer>
-          <StatusBar style="light" />
+          <QueryClientProvider client={queryClient}>
+            <AuthProvider>
+              <NavigationContainer>
+                <Stack.Navigator screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="SignIn" component={SignInScreen} />
+                  <Stack.Screen name="Dashboard" component={MainTabs} />
+                  <Stack.Screen name="AllExpenses">
+                    {({ navigation }) => (
+                      <AllExpensesScreen
+                        onBack={() => navigation.goBack()}
+                        onAddExpense={() => navigation.navigate('AddExpense')}
+                      />
+                    )}
+                  </Stack.Screen>
+                  <Stack.Screen name="AddExpense">
+                    {({ navigation }) => <AddExpenseScreen onBack={() => navigation.goBack()} />}
+                  </Stack.Screen>
+                  <Stack.Screen name="Categories">
+                    {({ navigation }) => (
+                      <CategoriesScreen
+                        onBack={() => navigation.goBack()}
+                        onAddCategory={() => navigation.navigate('AddCategory')}
+                      />
+                    )}
+                  </Stack.Screen>
+                  <Stack.Screen name="AddCategory">
+                    {({ navigation }) => <AddCategoryScreen onBack={() => navigation.goBack()} />}
+                  </Stack.Screen>
+                  <Stack.Screen name="Vendors">
+                    {({ navigation }) => (
+                      <VendorsScreen
+                        onBack={() => navigation.goBack()}
+                        onAddVendor={() => navigation.navigate('AddVendor')}
+                      />
+                    )}
+                  </Stack.Screen>
+                  <Stack.Screen name="AddVendor">
+                    {({ navigation }) => <AddVendorScreen onBack={() => navigation.goBack()} />}
+                  </Stack.Screen>
+                </Stack.Navigator>
+              </NavigationContainer>
+              <StatusBar style="light" />
+            </AuthProvider>
+          </QueryClientProvider>
         </SafeAreaProvider>
       </KeyboardProvider>
     </GestureHandlerRootView>

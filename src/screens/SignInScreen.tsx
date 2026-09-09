@@ -7,6 +7,8 @@ import {
   Text,
   TextInput,
   View,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Eye, EyeOff, Lock, Mail } from 'lucide-react-native';
 import { SvgXml } from 'react-native-svg';
@@ -17,6 +19,8 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { radius, space, theme, type } from '../theme/tokens';
 import { budgetingIllustrationXml } from '../assets/illustrations/budgeting';
 import type { RootStackParamList } from '../../App';
+import { useLogin } from '../api/auth';
+import { useAuth } from '../contexts/AuthContext';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SignIn'>;
 
@@ -26,6 +30,34 @@ export default function SignInScreen({ navigation }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+
+  const { mutate: login, isPending } = useLogin();
+  const { login: saveToken } = useAuth();
+
+  const handleSignIn = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Validation', 'Please enter both email and password');
+      return;
+    }
+
+    login(
+      { email, password },
+      {
+        onSuccess: async (response) => {
+          try {
+            await saveToken(response.access_token);
+            navigation.navigate('Dashboard');
+          } catch (error) {
+            Alert.alert('Error', 'Failed to save authentication token');
+          }
+        },
+        onError: (error: any) => {
+          const message = error?.data?.message || error?.message || 'Login failed';
+          Alert.alert('Login Error', message);
+        },
+      }
+    );
+  };
 
   return (
     <SafeAreaView style={styles.flex} edges={['top', 'bottom', 'left', 'right']}>
@@ -118,8 +150,16 @@ export default function SignInScreen({ navigation }: Props) {
           </View>
         </View>
 
-        <Pressable style={styles.signInButton} onPress={() => navigation.navigate('Dashboard')}>
-          <Text style={styles.signInButtonText}>Sign in</Text>
+        <Pressable
+          style={[styles.signInButton, isPending && styles.signInButtonDisabled]}
+          onPress={handleSignIn}
+          disabled={isPending}
+        >
+          {isPending ? (
+            <ActivityIndicator color={theme.textOnBrand} />
+          ) : (
+            <Text style={styles.signInButtonText}>Sign in</Text>
+          )}
         </Pressable>
 
         <View style={styles.footer}>
@@ -234,6 +274,9 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  signInButtonDisabled: {
+    opacity: 0.6,
   },
   signInButtonText: {
     ...type.body,
