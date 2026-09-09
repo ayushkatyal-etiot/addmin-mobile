@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Addmin",
+    "slug": "addmin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "addmin",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.addmin.app"
+    },
+    "android": {
+      "package": "com.addmin.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-secure-store",
+      "expo-sharing",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F7F8F8",
+          "image": "./assets/images/addmin-logo.png",
+          "imageWidth": 150
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "targetSdkVersion": 37,
+            "compileSdkVersion": 37,
+            "navigationBarColor": "#212121"
+          }
+        }
+      ]
+    ]
+  }
+}
