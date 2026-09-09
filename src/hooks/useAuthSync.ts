@@ -13,5 +13,6 @@ export function useAuthSync() {
         console.error('Failed to clear user on auth change:', error);
       });
     }
-  }, [isAuthenticated, clearUser]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 }
