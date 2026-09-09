@@ -99,7 +99,13 @@ function sortVendors(list: Vendor[], sortKey: SortKey): Vendor[] {
   }
 }
 
-export default function VendorsScreen({ onBack }: { onBack: () => void }) {
+export default function VendorsScreen({
+  onBack,
+  onAddVendor,
+}: {
+  onBack: () => void;
+  onAddVendor: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -232,7 +238,7 @@ export default function VendorsScreen({ onBack }: { onBack: () => void }) {
         )}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]}>
+      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={onAddVendor}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
