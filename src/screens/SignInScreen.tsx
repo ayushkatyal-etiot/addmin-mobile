@@ -47,7 +47,8 @@ export default function SignInScreen({ navigation }: Props) {
         onSuccess: async (response) => {
           try {
             await saveToken(response.access_token);
-            navigation.navigate('Dashboard');
+            // Don't navigate manually - auth state change in AuthContext
+            // will trigger RootNavigator to show Dashboard automatically
           } catch (error) {
             form.setFormError('Failed to save authentication token');
           }
