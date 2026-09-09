@@ -227,9 +227,12 @@ export default function DashboardScreen() {
                 <Text style={styles.bellBadgeText}>3</Text>
               </View>
             </View>
-            <View style={styles.avatar}>
+            <Pressable
+              style={styles.avatar}
+              onPress={() => navigation.navigate('Profile')}
+            >
               <Text style={styles.avatarText}>JS</Text>
-            </View>
+            </Pressable>
           </View>
         </View>
 

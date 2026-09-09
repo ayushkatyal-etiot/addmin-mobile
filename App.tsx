@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from 'react';
-import { StyleSheet, Platform } from 'react-native';
+import { StyleSheet, Platform, BackHandler } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -17,10 +17,11 @@ import {
   Urbanist_600SemiBold,
   Urbanist_700Bold,
 } from '@expo-google-fonts/urbanist';
-import { AuthProvider } from './src/contexts/AuthContext';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 
 import SignInScreen from './src/screens/SignInScreen';
 import DashboardScreen from './src/screens/DashboardScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 import AllExpensesScreen from './src/screens/AllExpensesScreen';
 import AddExpenseScreen from './src/screens/AddExpenseScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
@@ -37,6 +38,7 @@ const queryClient = new QueryClient();
 export type RootStackParamList = {
   SignIn: undefined;
   Dashboard: undefined;
+  Profile: undefined;
   AllExpenses: undefined;
   AddExpense: undefined;
   Categories: undefined;
@@ -71,6 +73,78 @@ function MainTabs() {
   );
 }
 
+function RootNavigator() {
+  const auth = useAuth();
+
+  if (auth.isLoading) {
+    return null;
+  }
+
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      {auth.isAuthenticated ? (
+        <>
+          <Stack.Screen name="Dashboard" component={MainTabs} />
+          <Stack.Screen name="Profile" component={ProfileScreen} />
+          <Stack.Screen name="AllExpenses">
+            {({ navigation }) => (
+              <AllExpensesScreen
+                onBack={() => navigation.goBack()}
+                onAddExpense={() => navigation.navigate('AddExpense')}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="AddExpense">
+            {({ navigation }) => <AddExpenseScreen onBack={() => navigation.goBack()} />}
+          </Stack.Screen>
+          <Stack.Screen name="Categories">
+            {({ navigation }) => (
+              <CategoriesScreen
+                onBack={() => navigation.goBack()}
+                onAddCategory={() => navigation.navigate('AddCategory')}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="AddCategory">
+            {({ navigation }) => <AddCategoryScreen onBack={() => navigation.goBack()} />}
+          </Stack.Screen>
+          <Stack.Screen name="Vendors">
+            {({ navigation }) => (
+              <VendorsScreen
+                onBack={() => navigation.goBack()}
+                onAddVendor={() => navigation.navigate('AddVendor')}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="AddVendor">
+            {({ navigation }) => <AddVendorScreen onBack={() => navigation.goBack()} />}
+          </Stack.Screen>
+        </>
+      ) : (
+        <Stack.Screen name="SignIn" component={SignInScreen} />
+      )}
+    </Stack.Navigator>
+  );
+}
+
+function AppContent() {
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Close app on back press from home screen
+      BackHandler.exitApp();
+      return true;
+    });
+
+    return () => backHandler.remove();
+  }, []);
+
+  return (
+    <NavigationContainer>
+      <RootNavigator />
+    </NavigationContainer>
+  );
+}
+
 export default function App() {
   const [fontsLoaded] = useFonts({
     Urbanist_400Regular,
@@ -102,45 +176,7 @@ export default function App() {
         <SafeAreaProvider>
           <QueryClientProvider client={queryClient}>
             <AuthProvider>
-              <NavigationContainer>
-                <Stack.Navigator screenOptions={{ headerShown: false }}>
-                  <Stack.Screen name="SignIn" component={SignInScreen} />
-                  <Stack.Screen name="Dashboard" component={MainTabs} />
-                  <Stack.Screen name="AllExpenses">
-                    {({ navigation }) => (
-                      <AllExpensesScreen
-                        onBack={() => navigation.goBack()}
-                        onAddExpense={() => navigation.navigate('AddExpense')}
-                      />
-                    )}
-                  </Stack.Screen>
-                  <Stack.Screen name="AddExpense">
-                    {({ navigation }) => <AddExpenseScreen onBack={() => navigation.goBack()} />}
-                  </Stack.Screen>
-                  <Stack.Screen name="Categories">
-                    {({ navigation }) => (
-                      <CategoriesScreen
-                        onBack={() => navigation.goBack()}
-                        onAddCategory={() => navigation.navigate('AddCategory')}
-                      />
-                    )}
-                  </Stack.Screen>
-                  <Stack.Screen name="AddCategory">
-                    {({ navigation }) => <AddCategoryScreen onBack={() => navigation.goBack()} />}
-                  </Stack.Screen>
-                  <Stack.Screen name="Vendors">
-                    {({ navigation }) => (
-                      <VendorsScreen
-                        onBack={() => navigation.goBack()}
-                        onAddVendor={() => navigation.navigate('AddVendor')}
-                      />
-                    )}
-                  </Stack.Screen>
-                  <Stack.Screen name="AddVendor">
-                    {({ navigation }) => <AddVendorScreen onBack={() => navigation.goBack()} />}
-                  </Stack.Screen>
-                </Stack.Navigator>
-              </NavigationContainer>
+              <AppContent />
               <StatusBar style="light" />
             </AuthProvider>
           </QueryClientProvider>
