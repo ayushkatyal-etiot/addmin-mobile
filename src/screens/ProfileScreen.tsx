@@ -27,7 +27,8 @@ export default function ProfileScreen({ navigation }: Props) {
         onPress: async () => {
           try {
             await logout();
-            navigation.navigate('SignIn');
+            // Don't navigate manually - auth state change in AuthContext
+            // will trigger RootNavigator to show SignIn automatically
           } catch (error) {
             Alert.alert('Error', 'Failed to logout. Please try again.');
           }
