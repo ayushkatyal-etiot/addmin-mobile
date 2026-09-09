@@ -143,7 +143,16 @@ export default function SignInScreen({ navigation }: Props) {
               ]}
             >
               <View style={styles.inputIcon} pointerEvents="none">
-                <Lock size={18} color={theme.textTertiary} />
+                <Lock
+                  size={18}
+                  color={
+                    form.passwordError
+                      ? theme.statusDanger
+                      : passwordFocused
+                        ? theme.brandDefault
+                        : theme.textTertiary
+                  }
+                />
               </View>
               <TextInput
                 value={form.password}
