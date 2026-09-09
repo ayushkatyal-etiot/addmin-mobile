@@ -7,9 +7,12 @@ export interface ApiRequest {
   headers?: Record<string, string>;
 }
 
+export type OnUnauthorizedCallback = () => void;
+
 export class ApiClient {
   private baseUrl: string;
   private defaultHeaders: Record<string, string>;
+  private onUnauthorized: OnUnauthorizedCallback | null = null;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
@@ -17,6 +20,10 @@ export class ApiClient {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     };
+  }
+
+  setOnUnauthorized(callback: OnUnauthorizedCallback) {
+    this.onUnauthorized = callback;
   }
 
   async request<T>({
@@ -41,6 +48,15 @@ export class ApiClient {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+
+      // Handle 401 Unauthorized - clear auth and notify
+      if (response.status === 401) {
+        this.clearAuthToken();
+        if (this.onUnauthorized) {
+          this.onUnauthorized();
+        }
+      }
+
       const error = new Error(
         errorData.message || `API Error: ${response.status} ${response.statusText}`
       );

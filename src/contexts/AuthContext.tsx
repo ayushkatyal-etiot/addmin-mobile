@@ -21,6 +21,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     restoreToken();
+    // Set up 401 handler for automatic logout on unauthorized
+    apiClient.setOnUnauthorized(async () => {
+      await logout();
+    });
   }, []);
 
   const restoreToken = async () => {
