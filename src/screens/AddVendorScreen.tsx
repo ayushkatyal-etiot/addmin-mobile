@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Camera,
   Check,
@@ -13,7 +14,17 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { radius, shadow, space, theme } from '../theme/tokens';
+import { useCreateVendor, useGetVendorById, useUpdateVendor } from '../api/vendors';
+import { useUser } from '../contexts/UserContext';
+import Toast from '../components/Toast';
+import Dialog from '../components/Dialog';
+import TextField from '../components/TextField';
+import type { CreateVendorRequest } from '../types/vendor';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../navigation/RootNavigator';
+import { useFocusEffect } from '@react-navigation/native';
+import { styles } from './AddVendorScreen.styles';
+import { theme } from '../theme/tokens';
 
 const EXISTING_VENDOR_NAMES = ['Sharma Facility Services', 'Blue Star Ltd', 'Godrej Interio', 'Quess Corp', 'Nilkamal Ltd'];
 const STATES = ['Delhi', 'Gujarat', 'Karnataka', 'Maharashtra', 'Tamil Nadu'];
@@ -22,7 +33,7 @@ type DocStatus = 'done' | 'progress' | 'failed';
 type DocItem = { id: number; name: string; meta: string; status: DocStatus; progress?: number };
 
 type Errors = Partial<Record<
-  'name' | 'email' | 'phone' | 'city' | 'state' | 'gst' | 'bankAccount' | 'ifsc' | 'bankName' | 'branchName',
+  'name' | 'email' | 'phone' | 'city' | 'state' | 'country' | 'gst' | 'pan' | 'tan' | 'bankAccount' | 'ifsc' | 'bankName' | 'branchName',
   string | null
 >>;
 
@@ -33,7 +44,8 @@ type FormState = {
   status: 'active' | 'inactive';
   address: string;
   city: string;
-  state: string | null;
+  state: string;
+  country: string;
   gst: string;
   pan: string;
   tan: string;
@@ -45,7 +57,7 @@ type FormState = {
 
 const initialForm: FormState = {
   name: '', email: '', phone: '', status: 'active',
-  address: '', city: '', state: null,
+  address: '', city: '', state: '', country: '',
   gst: '', pan: '', tan: '',
   bankAccount: '', ifsc: '', bankName: '', branchName: '',
 };
@@ -55,66 +67,148 @@ const initialDocs: DocItem[] = [
   { id: 2, name: 'Cancelled_cheque.jpg', meta: '', status: 'progress', progress: 60 },
 ];
 
-export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
+type Props = NativeStackScreenProps<RootStackParamList, 'AddVendor'>;
+
+type AddVendorScreenProps = {
+  onBack?: () => void;
+  route?: { params?: { vendorId?: string } };
+};
+
+export default function AddVendorScreen({ onBack = () => {}, route }: AddVendorScreenProps) {
+  const vendorId = route?.params?.vendorId;
+  const isEditMode = !!vendorId;
+
+  console.log('[AddVendorScreen] Screen mounted/updated - vendorId:', vendorId, 'isEditMode:', isEditMode);
+
   const [form, setForm] = useState<FormState>(initialForm);
   const [errors, setErrors] = useState<Errors>({});
-  const [stateSheetOpen, setStateSheetOpen] = useState(false);
-  const [stateSearch, setStateSearch] = useState('');
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const [uploadSheetOpen, setUploadSheetOpen] = useState(false);
   const [docs, setDocs] = useState<DocItem[]>(initialDocs);
   const [docCounter, setDocCounter] = useState(100);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('error');
+
+  const queryClient = useQueryClient();
+  const { mutateAsync: createVendor, isPending: isCreating } = useCreateVendor();
+  const { mutateAsync: updateVendor, isPending: isUpdating } = useUpdateVendor();
+  const { data: vendorData, isLoading: vendorLoading, refetch: refetchVendor, error: vendorError } = useGetVendorById(vendorId || '');
+  const { getCurrentOrganisation } = useUser();
+
+  console.log('[AddVendorScreen] useGetVendorById state:', { vendorId, isLoading: vendorLoading, hasData: !!vendorData, error: vendorError?.message });
+
+  // Prefill form when in edit mode
+  React.useEffect(() => {
+    if (isEditMode && vendorData) {
+      setForm({
+        name: vendorData.name,
+        email: vendorData.email,
+        phone: vendorData.phone_number,
+        status: vendorData.status === 'active' ? 'active' : 'inactive',
+        address: vendorData.address,
+        city: vendorData.city,
+        state: vendorData.state,
+        country: vendorData.country,
+        gst: vendorData.gst_number || '',
+        pan: vendorData.pan_number || '',
+        tan: vendorData.tan_number || '',
+        bankAccount: vendorData.bank_account_number ? vendorData.bank_account_number.replace(/X/g, '') : '',
+        ifsc: vendorData.ifsc_code || '',
+        bankName: vendorData.bank_name || '',
+        branchName: vendorData.branch_name || '',
+      });
+    } else if (!isEditMode) {
+      setForm(initialForm);
+    }
+  }, [vendorId, isEditMode, vendorData]);
 
   const isDirty =
     form.name !== '' || form.email !== '' || form.phone !== '' || form.status !== 'active' ||
-    form.address !== '' || form.city !== '' || form.state !== null ||
+    form.address !== '' || form.city !== '' || form.state !== '' || form.country !== '' ||
     form.gst !== '' || form.pan !== '' || form.tan !== '' ||
     form.bankAccount !== '' || form.ifsc !== '' || form.bankName !== '' || form.branchName !== '';
 
   const patch = (p: Partial<FormState>) => setForm((f) => ({ ...f, ...p }));
   const patchErrors = (p: Errors) => setErrors((e) => ({ ...e, ...p }));
 
-  const filteredStates = STATES.filter((s) => s.toLowerCase().includes(stateSearch.toLowerCase()));
-
   const validate = (): Errors => {
     const err: Errors = {};
+
+    // Mandatory fields
     err.name = form.name.trim()
       ? EXISTING_VENDOR_NAMES.some((n) => n.toLowerCase() === form.name.trim().toLowerCase())
         ? 'A vendor with this name already exists'
         : null
       : 'Vendor name is required';
+
     err.email = form.email.trim()
       ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())
         ? null
         : 'Enter a valid email address'
       : 'Email is required';
-    err.phone = form.phone.replace(/\D/g, '').length >= 10 ? null : 'Enter a valid phone number';
-    err.city = form.city.trim() ? null : 'City is required';
-    err.state = form.state ? null : 'State is required';
 
-    err.gst = form.gst.trim() && form.gst.trim().length !== 15
-      ? 'GSTIN must be 15 characters, e.g. 27AABCS1429B1ZQ'
+    err.phone = form.phone.replace(/\D/g, '').length >= 10
+      ? null
+      : 'Enter a valid phone number (at least 10 digits)';
+
+    err.city = form.city.trim() ? null : 'City is required';
+    err.state = form.state.trim() ? null : 'State is required';
+    err.country = form.country.trim() ? null : 'Country is required';
+
+    // GST validation: 15 characters, format: ##AABCU####A#Z#
+    err.gst = form.gst.trim()
+      ? /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/.test(form.gst.trim())
+        ? null
+        : 'Enter a valid GSTIN (e.g., 27AABCS1429B1ZQ)'
       : null;
 
+    // PAN validation: 10 characters, format: AAAAA####A (5 letters, 4 digits, 1 letter)
+    err.pan = form.pan.trim()
+      ? /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/.test(form.pan.trim())
+        ? null
+        : 'Enter a valid PAN (e.g., AAAAA1234A)'
+      : null;
+
+    // TAN validation: 10 characters, format: A#A#A####A (letter, digit pattern)
+    err.tan = form.tan.trim()
+      ? /^[A-Z]{1}[0-9]{1}[A-Z]{1}[0-9]{1}[A-Z]{1}[0-9]{4}$/.test(form.tan.trim())
+        ? null
+        : 'Enter a valid TAN (e.g., A1A1A0001)'
+      : null;
+
+    // Banking details - all or nothing
     const bankFields = [form.bankAccount, form.ifsc, form.bankName, form.branchName];
     const bankFilled = bankFields.some((v) => v.trim());
     const bankComplete = bankFields.every((v) => v.trim());
+
     if (bankFilled && !bankComplete) {
       const msg = 'Complete all banking details or leave them all blank';
       err.bankAccount = form.bankAccount.trim() ? null : msg;
       err.ifsc = form.ifsc.trim() ? null : msg;
       err.bankName = form.bankName.trim() ? null : msg;
       err.branchName = form.branchName.trim() ? null : msg;
+    } else if (bankComplete) {
+      // IFSC validation: 11 characters, format: ABCD0123456
+      err.ifsc = /^[A-Z]{4}0[A-Z0-9]{6}$/.test(form.ifsc.trim())
+        ? null
+        : 'Enter a valid IFSC code (e.g., SBIN0000456)';
+      err.bankAccount = null;
+      err.bankName = null;
+      err.branchName = null;
     } else {
-      err.bankAccount = null; err.ifsc = null; err.bankName = null; err.branchName = null;
+      err.bankAccount = null;
+      err.ifsc = null;
+      err.bankName = null;
+      err.branchName = null;
     }
     return err;
   };
 
   const CARD_FIELDS = {
     'Vendor Details': ['name', 'email', 'phone'] as const,
-    'Address Details': ['city', 'state'] as const,
-    'Tax Details': ['gst'] as const,
+    'Address Details': ['city', 'state', 'country'] as const,
+    'Tax Details': ['gst', 'pan', 'tan'] as const,
     'Banking Details': ['bankAccount', 'ifsc', 'bankName', 'branchName'] as const,
   };
   const cardHasError = (fields: readonly string[]) => fields.some((f) => errors[f as keyof Errors]);
@@ -122,11 +216,67 @@ export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
     .filter(([, fields]) => (fields as readonly string[]).some((f) => errors[f as keyof Errors]))
     .map(([name]) => name);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const err = validate();
     setErrors(err);
     const hasError = Object.values(err).some(Boolean);
-    if (!hasError) onBack();
+    if (hasError) return;
+
+    try {
+      const phoneNumber = form.phone.trim();
+      const formattedPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91-${phoneNumber}`;
+
+      const payload: CreateVendorRequest = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone_number: formattedPhone,
+        address: form.address.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+        country: form.country.trim(),
+        is_active: form.status === 'active',
+      };
+
+      // Add optional fields if filled
+      if (form.gst.trim()) payload.gst_number = form.gst.trim();
+      if (form.pan.trim()) payload.pan_number = form.pan.trim();
+      if (form.tan.trim()) payload.tan_number = form.tan.trim();
+      if (form.bankAccount.trim()) payload.bank_account_number = form.bankAccount.trim();
+      if (form.ifsc.trim()) payload.ifsc_code = form.ifsc.trim();
+      if (form.bankName.trim()) payload.bank_name = form.bankName.trim();
+      if (form.branchName.trim()) payload.branch_name = form.branchName.trim();
+
+      if (isEditMode && vendorData) {
+        console.log('[AddVendorScreen] Updating vendor...');
+        await updateVendor({ ...payload, vendorId: vendorData.id });
+        setToastType('success');
+        setToastMessage('Vendor updated successfully');
+      } else {
+        const org = getCurrentOrganisation();
+        if (!org) {
+          setToastType('error');
+          setToastMessage('No organisation selected');
+          setToastVisible(true);
+          return;
+        }
+
+        console.log('[AddVendorScreen] Creating vendor...');
+        await createVendor(payload);
+        setToastType('success');
+        setToastMessage('Vendor created successfully');
+        // Invalidate vendors list to refresh it
+        await queryClient.invalidateQueries({ queryKey: ['vendors'] });
+      }
+
+      setToastVisible(true);
+      setTimeout(() => onBack(), 1500);
+    } catch (err: any) {
+      console.error('[AddVendorScreen] Failed to save vendor:', err);
+      const message = err?.data?.detail || err?.data?.message || err?.message || 'Failed to save vendor';
+      setToastType('error');
+      setToastMessage(message);
+      setToastVisible(true);
+    }
   };
 
   const handleCancel = () => {
@@ -160,7 +310,7 @@ export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
         <Pressable style={styles.closeButton} onPress={handleCancel}>
           <X size={20} color={theme.textPrimary} strokeWidth={1.75} />
         </Pressable>
-        <Text style={styles.headerTitle}>Add Vendor</Text>
+        <Text style={styles.headerTitle}>{isEditMode ? 'Edit Vendor' : 'Add Vendor'}</Text>
       </View>
 
       <ScrollView style={styles.flex} contentContainerStyle={styles.scrollContent}>
@@ -235,24 +385,20 @@ export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
             placeholder="Enter city"
             error={errors.city}
           />
-          <View style={styles.fieldGroup}>
-            <Text style={[styles.label, errors.state && styles.labelError]}>
-              State<Text style={styles.required}> *</Text>
-            </Text>
-            <Pressable style={[styles.pickerRow, errors.state && styles.inputError]} onPress={() => setStateSheetOpen(true)}>
-              <Text style={[styles.pickerText, form.state && styles.pickerTextFilled]}>{form.state ?? 'Select state'}</Text>
-              <ChevronDown size={18} color={theme.textTertiary} strokeWidth={2} />
-            </Pressable>
-            {errors.state ? <Text style={styles.errorText}>{errors.state}</Text> : null}
-          </View>
-          <View style={styles.fieldGroup}>
-            <Text style={styles.label}>
-              Country<Text style={styles.required}> *</Text>
-            </Text>
-            <View style={styles.pickerRowDisabled}>
-              <Text style={styles.pickerTextFilled}>India</Text>
-            </View>
-          </View>
+          <TextField
+            label="State" required
+            value={form.state}
+            onChangeText={(v) => { patch({ state: v }); patchErrors({ state: null }); }}
+            placeholder="Enter state"
+            error={errors.state}
+          />
+          <TextField
+            label="Country" required
+            value={form.country}
+            onChangeText={(v) => { patch({ country: v }); patchErrors({ country: null }); }}
+            placeholder="Enter country"
+            error={errors.country}
+          />
         </Card>
 
         <Card
@@ -271,16 +417,18 @@ export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
           <TextField
             label="PAN Number"
             value={form.pan}
-            onChangeText={(v) => patch({ pan: v.toUpperCase() })}
-            placeholder="AABCS1429B"
+            onChangeText={(v) => { patch({ pan: v.toUpperCase() }); patchErrors({ pan: null }); }}
+            placeholder="AAAAA1234A"
             autoCapitalize="characters"
+            error={errors.pan}
           />
           <TextField
             label="TAN Number"
             value={form.tan}
-            onChangeText={(v) => patch({ tan: v.toUpperCase() })}
-            placeholder="AABC12345A"
+            onChangeText={(v) => { patch({ tan: v.toUpperCase() }); patchErrors({ tan: null }); }}
+            placeholder="A1A1A0001"
             autoCapitalize="characters"
+            error={errors.tan}
           />
         </Card>
 
@@ -346,52 +494,15 @@ export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
               <Text style={[styles.footerReset, !isDirty && styles.footerResetDisabled]}>Reset</Text>
             </Pressable>
           </View>
-          <Pressable style={styles.saveButton} onPress={handleSave}>
-            <Text style={styles.saveButtonText}>Add Vendor</Text>
+          <Pressable style={styles.saveButton} onPress={handleSave} disabled={isCreating || isUpdating}>
+            <Text style={styles.saveButtonText}>
+              {isEditMode ? 'Update Vendor' : 'Add Vendor'}
+            </Text>
           </Pressable>
         </View>
       </View>
 
-      <Modal visible={stateSheetOpen} transparent animationType="slide" onRequestClose={() => setStateSheetOpen(false)}>
-        <View style={styles.sheetRoot}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setStateSheetOpen(false)} />
-          <View style={styles.sheet}>
-            <View style={styles.sheetHandleRow}><View style={styles.sheetHandle} /></View>
-            <View style={styles.sheetTitleRow}>
-              <Text style={styles.sheetTitle}>Select state</Text>
-              <Pressable style={styles.sheetCloseButton} onPress={() => setStateSheetOpen(false)}>
-                <X size={16} color={theme.textSecondary} strokeWidth={2} />
-              </Pressable>
-            </View>
-            <View style={styles.sheetSearchWrap}>
-              <View style={styles.sheetSearchBar}>
-                <Search size={16} color={theme.textTertiary} strokeWidth={1.75} />
-                <TextInput
-                  style={styles.sheetSearchInput}
-                  value={stateSearch}
-                  onChangeText={setStateSearch}
-                  placeholder="Search states"
-                  placeholderTextColor={theme.textTertiary}
-                />
-              </View>
-            </View>
-            <ScrollView contentContainerStyle={styles.sheetOptionsList}>
-              {filteredStates.map((s) => (
-                <Pressable
-                  key={s}
-                  style={styles.sheetOptionRow}
-                  onPress={() => { patch({ state: s }); patchErrors({ state: null }); setStateSheetOpen(false); }}
-                >
-                  <Text style={[styles.sheetOptionText, form.state === s && styles.sheetOptionTextSelected]}>{s}</Text>
-                  {form.state === s ? <Check size={18} color={theme.brandDefault} strokeWidth={2.5} /> : null}
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal visible={uploadSheetOpen} transparent animationType="slide" onRequestClose={() => setUploadSheetOpen(false)}>
+<Modal visible={uploadSheetOpen} transparent animationType="slide" onRequestClose={() => setUploadSheetOpen(false)}>
         <View style={styles.sheetRoot}>
           <Pressable style={StyleSheet.absoluteFill} onPress={() => setUploadSheetOpen(false)} />
           <View style={styles.sheet}>
@@ -414,23 +525,23 @@ export default function AddVendorScreen({ onBack }: { onBack: () => void }) {
         </View>
       </Modal>
 
-      <Modal visible={showDiscardConfirm} transparent animationType="fade" onRequestClose={() => setShowDiscardConfirm(false)}>
-        <View style={styles.confirmRoot}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowDiscardConfirm(false)} />
-          <View style={styles.confirmCard}>
-            <Text style={styles.confirmTitle}>Discard this vendor?</Text>
-            <Text style={styles.confirmDescription}>The details you entered will be lost.</Text>
-            <View style={styles.confirmActions}>
-              <Pressable style={styles.confirmPrimary} onPress={() => setShowDiscardConfirm(false)}>
-                <Text style={styles.confirmPrimaryText}>Keep editing</Text>
-              </Pressable>
-              <Pressable style={styles.confirmDestructive} onPress={() => { setShowDiscardConfirm(false); onBack(); }}>
-                <Text style={styles.confirmDestructiveText}>Discard</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      <Dialog
+        visible={showDiscardConfirm}
+        title="Discard this vendor?"
+        description="The details you entered will be lost."
+        onDismiss={() => setShowDiscardConfirm(false)}
+        buttons={[
+          { label: 'Keep editing', onPress: () => setShowDiscardConfirm(false), type: 'cancel' },
+          { label: 'Discard', onPress: () => { setShowDiscardConfirm(false); onBack(); }, type: 'destructive' },
+        ]}
+      />
+
+      <Toast
+        visible={toastVisible}
+        message={toastMessage}
+        type={toastType}
+        onHide={() => setToastVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -451,31 +562,6 @@ function Card({
   );
 }
 
-function TextField({
-  label, required, value, onChangeText, placeholder, error, keyboardType, autoCapitalize,
-}: {
-  label: string; required?: boolean; value: string; onChangeText: (v: string) => void;
-  placeholder?: string; error?: string | null; keyboardType?: 'email-address' | 'phone-pad' | 'number-pad';
-  autoCapitalize?: 'characters';
-}) {
-  return (
-    <View style={styles.fieldGroup}>
-      <Text style={[styles.label, error && styles.labelError]}>
-        {label}{required ? <Text style={styles.required}> *</Text> : null}
-      </Text>
-      <TextInput
-        style={[styles.input, error && styles.inputError]}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={theme.textTertiary}
-        keyboardType={keyboardType}
-        autoCapitalize={autoCapitalize}
-      />
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
-    </View>
-  );
-}
 
 function DocRow({ doc, onRemove, onRetry }: { doc: DocItem; onRemove: () => void; onRetry: () => void }) {
   const isFailed = doc.status === 'failed';
@@ -507,130 +593,3 @@ function DocRow({ doc, onRemove, onRetry }: { doc: DocItem; onRemove: () => void
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: theme.bgPage },
-  header: { flexDirection: 'row', alignItems: 'center', gap: space[2], paddingHorizontal: space[6] - 10, paddingBottom: space[3] },
-  closeButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-
-  scrollContent: { paddingHorizontal: space[6], paddingBottom: space[6], gap: space[4] },
-
-  card: {
-    backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderSubtle, borderRadius: radius.lg,
-    padding: space[4], gap: space[4],
-  },
-  cardError: { borderColor: theme.statusDanger },
-  cardTitle: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  cardSubtitle: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[1] },
-
-  fieldGroup: { gap: space[1] },
-  label: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  labelError: { color: theme.statusDanger },
-  required: { color: theme.statusDanger },
-  errorText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.statusDanger },
-
-  input: {
-    minHeight: 44, paddingHorizontal: space[3], fontSize: 16, fontFamily: 'Urbanist_400Regular',
-    color: theme.textPrimary, backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-  },
-  inputError: { borderColor: theme.statusDanger },
-
-  phoneRow: {
-    flexDirection: 'row', alignItems: 'center', minHeight: 44, backgroundColor: theme.bgRaised,
-    borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md, overflow: 'hidden',
-  },
-  phonePrefix: {
-    paddingHorizontal: 10, fontSize: 16, color: theme.textSecondary, height: 44, lineHeight: 44,
-    borderRightWidth: 1, borderRightColor: theme.borderDefault,
-  },
-  phoneInput: { flex: 1, minHeight: 44, paddingHorizontal: space[3], fontSize: 16, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary },
-
-  segmented: { flexDirection: 'row', backgroundColor: theme.bgSunken, borderRadius: radius.md, padding: 3, gap: 3 },
-  segment: { flex: 1, height: 38, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' },
-  segmentActive: { backgroundColor: theme.bgRaised, ...shadow[1] },
-  segmentText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textSecondary },
-  segmentTextActive: { color: theme.textPrimary },
-
-  textarea: {
-    minHeight: 76, padding: space[3], fontSize: 16, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary,
-    backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md,
-  },
-
-  pickerRow: {
-    minHeight: 44, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
-    borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  pickerRowDisabled: {
-    minHeight: 44, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
-    borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  pickerText: { fontSize: 15, color: theme.textTertiary },
-  pickerTextFilled: { color: theme.textPrimary, fontSize: 15 },
-
-  uploadDash: {
-    minHeight: 44, paddingHorizontal: space[4], backgroundColor: theme.bgSunken, borderWidth: 1, borderColor: theme.borderStrong,
-    borderStyle: 'dashed', borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space[2],
-  },
-  uploadDashText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.brandActive },
-
-  docRow: { flexDirection: 'row', alignItems: 'center', gap: space[3] },
-  docIcon: { width: 40, height: 40, borderRadius: radius.md, backgroundColor: theme.statusInfoBg, alignItems: 'center', justifyContent: 'center' },
-  docIconFailed: { backgroundColor: theme.statusDangerBg },
-  docText: { flex: 1, minWidth: 0 },
-  docName: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  docMeta: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: 2 },
-  docMetaError: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.statusDanger, marginTop: 2 },
-  progressTrack: { height: 4, backgroundColor: theme.bgSunken, borderRadius: radius.full, marginTop: space[1] + 2, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: theme.brandDefault },
-  retryButton: { height: 28, paddingHorizontal: space[2] + 2, backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.statusDanger, borderRadius: radius.sm, alignItems: 'center', justifyContent: 'center' },
-  retryButtonText: { fontSize: 12, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDanger },
-  docRemove: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-
-  footer: {
-    backgroundColor: theme.bgRaised, borderTopWidth: 1, borderTopColor: theme.borderSubtle,
-    paddingHorizontal: space[6], paddingTop: space[3], paddingBottom: space[3], gap: space[2] + 2,
-  },
-  footerErrorRow: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  footerErrorText: { flex: 1, fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDanger },
-  footerActionsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  footerActions: { flexDirection: 'row', gap: space[4] },
-  footerCancel: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  footerReset: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDanger },
-  footerResetDisabled: { color: theme.textDisabled },
-  saveButton: { height: 44, paddingHorizontal: space[5], backgroundColor: theme.brandDefault, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  saveButtonText: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textOnBrand },
-
-  sheetRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.bgOverlay },
-  sheet: { backgroundColor: theme.bgRaised, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, maxHeight: '75%' },
-  sheetHandleRow: { alignItems: 'center', paddingTop: space[3] },
-  sheetHandle: { width: 36, height: 4, borderRadius: radius.full, backgroundColor: theme.borderStrong },
-  sheetTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space[5], paddingTop: space[4] },
-  sheetTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  sheetCloseButton: { width: 36, height: 36, borderRadius: radius.full, backgroundColor: theme.bgSunken, alignItems: 'center', justifyContent: 'center' },
-  sheetSearchWrap: { paddingHorizontal: space[5], paddingTop: space[4] },
-  sheetSearchBar: { height: 40, paddingHorizontal: space[3], backgroundColor: theme.bgSunken, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  sheetSearchInput: { flex: 1, fontSize: 14, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, padding: 0 },
-  sheetOptionsList: { paddingHorizontal: space[5], paddingTop: space[3], paddingBottom: space[5] },
-  sheetOptionRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: space[3], minHeight: 44, borderBottomWidth: 1, borderBottomColor: theme.borderSubtle,
-  },
-  sheetOptionText: { fontSize: 15, color: theme.textPrimary },
-  sheetOptionTextSelected: { fontFamily: 'Urbanist_600SemiBold' },
-
-  uploadOptionsList: { paddingHorizontal: space[5], paddingTop: space[3], paddingBottom: space[6], gap: space[1] },
-  uploadOptionRow: { flexDirection: 'row', alignItems: 'center', gap: space[3], minHeight: 52 },
-  uploadOptionText: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-
-  confirmRoot: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space[6], backgroundColor: theme.bgOverlay },
-  confirmCard: { backgroundColor: theme.bgRaised, borderRadius: radius.lg, padding: space[5], width: '100%', maxWidth: 320, ...shadow[4] },
-  confirmTitle: { fontSize: 16, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  confirmDescription: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[2], lineHeight: 18 },
-  confirmActions: { gap: space[2], marginTop: space[5] },
-  confirmPrimary: { minHeight: 44, paddingHorizontal: space[4], backgroundColor: theme.brandDefault, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  confirmPrimaryText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textOnBrand },
-  confirmDestructive: { minHeight: 44, paddingHorizontal: space[4], borderWidth: 1, borderColor: theme.statusDanger, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  confirmDestructiveText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDanger },
-});

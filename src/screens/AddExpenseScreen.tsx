@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   Modal,
   Pressable,
@@ -7,6 +8,7 @@ import {
   Text,
   TextInput,
   View,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
@@ -25,7 +27,15 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { radius, shadow, space, theme } from '../theme/tokens';
+import { useCreateExpense, useGetExpenseCategories, useGetVendors, useGetDepartments, useGetProjects, useGetPayees } from '../api/expenses';
+import { mapFormDataToExpenseBody } from '../utils/mapExpenseFormData';
+import Toast from '../components/Toast';
+import Dialog from '../components/Dialog';
+import TextField from '../components/TextField';
+import DatePickerSheet from '../components/DatePickerSheet';
+import { useUser } from '../contexts/UserContext';
+import { styles } from './AddExpenseScreen.styles';
+import { theme } from '../theme/tokens';
 
 const CATEGORIES = ['Utility', 'Rent & Lease', 'Maintenance', 'Office Supplies', 'Cloud & Software', 'Travel', 'Professional Services'];
 const SUBCATS: Record<string, string[]> = {
@@ -164,8 +174,76 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
   const [pendingInvoiceFile, setPendingInvoiceFile] = useState<FileItem | null>(null);
   const [fileCounter, setFileCounter] = useState(100);
 
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('error');
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const queryClient = useQueryClient();
+  const { mutateAsync: createExpense, isPending: isCreatingExpense } = useCreateExpense();
+  const { getCurrentOrganisation, getCurrentBranch } = useUser();
+  const currentOrg = getCurrentOrganisation();
+  const currentBranch = getCurrentBranch();
+
+  // Fetch dropdown data from APIs
+  const { data: categoriesData, isLoading: categoriesLoading } = useGetExpenseCategories();
+  const { data: vendorsData, isLoading: vendorsLoading } = useGetVendors();
+  const { data: departmentsData, isLoading: departmentsLoading } = useGetDepartments();
+  const { data: projectsData, isLoading: projectsLoading } = useGetProjects();
+  const { data: payeesData, isLoading: payeesLoading } = useGetPayees();
+
+  // Helper functions to convert IDs to display names
+  const getCategoryName = (id: string | null): string => {
+    if (!id) return 'Select expense category';
+    const cat = categoriesData?.items.find((c) => c.id === id);
+    return cat?.name || id;
+  };
+
+  const getSubCategoryName = (id: string | null): string => {
+    if (!id || !s.category) return 'Select sub category';
+    const cats = categoriesData?.items || [];
+    const subcat = cats.find((c) => c.id === id && (c as any).parent_id === s.category);
+    return subcat?.name || id;
+  };
+
+  const getVendorName = (id: string | null): string => {
+    if (!id) return 'Select vendor';
+    const vendor = vendorsData?.items.find((v) => v.id === id);
+    return vendor?.name || id;
+  };
+
+  const getDepartmentName = (id: string | null): string => {
+    if (!id) return 'Select department';
+    const dept = departmentsData?.items.find((d) => d.id === id);
+    return dept?.name || id;
+  };
+
+  const getProjectName = (id: string | null): string => {
+    if (!id) return 'Select project';
+    const proj = projectsData?.items.find((p) => p.id === id);
+    return proj?.name || id;
+  };
+
+  const getPayeeName = (id: string | null): string => {
+    if (!id) return 'Select payee';
+    const payee = payeesData?.items.find((p) => p.id === id);
+    return payee?.name || id;
+  };
+
   const patch = (p: Partial<FormState>) => setS((prev) => ({ ...prev, ...p }));
   const patchErrors = (p: Errors) => setS((prev) => ({ ...prev, errors: { ...prev.errors, ...p } }));
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+    setToastMessage(message);
+    setToastType(type);
+    setToastVisible(true);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastVisible(false);
+    }, 3000);
+  };
 
   const openSheet = (kind: ActiveSheet) => {
     setActiveSheet(kind);
@@ -378,17 +456,43 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
   const retrySupportingFile = (id: number) =>
     patch({ supportingFiles: s.supportingFiles.map((f) => (f.id === id ? { ...f, status: 'done', meta: '1.1 MB · uploaded just now' } : f)) });
 
-  const onNextStep5 = () => {
+  const onNextStep5 = async () => {
     if (s.step2Error) {
       patch({ blockedMessage: 'Step 2, Payee & Invoice Details needs review.', openStep: 2 });
       return;
     }
     if (!s.invoiceFile) {
       patchErrors({ invoiceFile: 'An invoice file is required' });
-    } else {
+      return;
+    }
+
+    try {
+      const org = getCurrentOrganisation();
+      const branch = getCurrentBranch();
+      if (!org?.id || !branch?.id) {
+        showToast('No organisation or branch selected', 'error');
+        return;
+      }
+
       patchErrors({ invoiceFile: null });
-      patch({ step5Complete: true, blockedMessage: '' });
-      onBack();
+      const expenseBody = mapFormDataToExpenseBody(s, org.id, branch.id);
+
+      console.log('[AddExpenseScreen] Submitting expense:', expenseBody);
+      await createExpense(expenseBody);
+
+      showToast('Expense created successfully', 'success');
+
+      // Invalidate expenses query to refresh the list
+      await queryClient.invalidateQueries({ queryKey: ['expenses'] });
+
+      setTimeout(() => {
+        patch({ step5Complete: true, blockedMessage: '' });
+        onBack();
+      }, 1500);
+    } catch (error: any) {
+      console.error('[AddExpenseScreen] Failed to create expense:', error);
+      const message = error?.data?.message || error?.message || 'Failed to create expense';
+      showToast(message, 'error');
     }
   };
 
@@ -438,16 +542,49 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
   const mkOptions = (list: string[], current: string | null, onSelect: (name: string) => void) =>
     list.map((name) => ({ name, selected: name === current, onSelect: () => onSelect(name) }));
 
+  const mkOptionsWithId = (
+    list: Array<{ id: string; name: string }>,
+    currentId: string | null,
+    onSelect: (id: string, name: string) => void,
+  ) =>
+    list.map((item) => ({
+      name: item.name,
+      selected: item.id === currentId,
+      onSelect: () => onSelect(item.id, item.name),
+    }));
+
   let sheetTitle = '';
   let sheetOptions: { name: string; selected: boolean; onSelect: () => void }[] = [];
   let sheetShowSearch = false;
+
   if (activeSheet === 'category') {
     sheetTitle = 'Expense Category';
     sheetShowSearch = true;
-    sheetOptions = mkOptions(CATEGORIES.filter((c) => c.toLowerCase().includes(categorySearch.toLowerCase())), s.category, selectCategory);
+    const cats = categoriesData?.items || [];
+    // Only show root categories (parent_id is null)
+    const rootCats = cats.filter((c) => (c as any).parent_id === null);
+    const filtered = rootCats.filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()));
+    sheetOptions = mkOptionsWithId(filtered, s.category, (id) => {
+      const changed = !!s.category && s.category !== id;
+      patch({
+        category: id, subCategory: null,
+        categoryChangeNotice: changed || s.categoryChangeNotice,
+        step2Error: changed && s.step2Complete ? true : s.step2Error,
+        step2Complete: changed && s.step2Complete ? false : s.step2Complete,
+      });
+      patchErrors({ category: null });
+      closeSheet();
+    });
   } else if (activeSheet === 'subCategory') {
     sheetTitle = 'Sub Category';
-    sheetOptions = mkOptions(SUBCATS[s.category || ''] || [], s.subCategory, selectSubCategory);
+    const cats = categoriesData?.items || [];
+    // Find subcategories where parent_id matches the selected category
+    const subcats = s.category ? cats.filter((c) => (c as any).parent_id === s.category) : [];
+    const filtered = subcats.filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()));
+    sheetOptions = mkOptionsWithId(filtered, s.subCategory, (id) => {
+      patch({ subCategory: id });
+      closeSheet();
+    });
   } else if (activeSheet === 'nature') {
     sheetTitle = 'Expense Nature';
     sheetOptions = mkOptions(NATURES, s.nature, selectNature);
@@ -463,21 +600,42 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
   } else if (activeSheet === 'vendor') {
     sheetTitle = 'Vendor';
     sheetShowSearch = true;
-    sheetOptions = mkOptions(VENDORS.filter((c) => c.toLowerCase().includes(categorySearch.toLowerCase())), s.vendor, selectVendor);
+    const vendors = vendorsData?.items || [];
+    const filtered = vendors.filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()));
+    sheetOptions = mkOptionsWithId(filtered, s.vendor, (id) => {
+      patch({ vendor: id });
+      closeSheet();
+    });
   } else if (activeSheet === 'payee') {
     sheetTitle = 'Payee';
     sheetShowSearch = true;
-    const list = s.payeeKind === 'Utility' ? UTILITY_PAYEES : SAAS_PAYEES;
-    sheetOptions = mkOptions(list.filter((c) => c.toLowerCase().includes(categorySearch.toLowerCase())), s.payee, selectPayee);
+    // Fetch payees from API data
+    const payees = payeesData?.items || [];
+    const filtered = payees.filter((p) => p.name.toLowerCase().includes(categorySearch.toLowerCase()));
+    sheetOptions = mkOptionsWithId(filtered, s.payee, (id) => {
+      patch({ payee: id });
+      patchErrors({ payee: null });
+      closeSheet();
+    });
   } else if (activeSheet === 'currency') {
     sheetTitle = 'Currency';
     sheetOptions = mkOptions(CURRENCIES, s.currency, selectCurrency);
   } else if (activeSheet === 'department') {
     sheetTitle = 'Department';
-    sheetOptions = mkOptions(DEPARTMENTS, s.department, selectDepartment);
+    const departments = departmentsData?.items || [];
+    const filtered = departments.filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()));
+    sheetOptions = mkOptionsWithId(filtered, s.department, (id) => {
+      patch({ department: id });
+      closeSheet();
+    });
   } else if (activeSheet === 'project') {
     sheetTitle = 'Project';
-    sheetOptions = mkOptions(PROJECTS, s.project, selectProject);
+    const projects = projectsData?.items || [];
+    const filtered = projects.filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()));
+    sheetOptions = mkOptionsWithId(filtered, s.project, (id) => {
+      patch({ project: id });
+      closeSheet();
+    });
   }
   const optionSheetKinds: OptionSheetKind[] = ['category', 'subCategory', 'nature', 'behavior', 'frequency', 'payeeKind', 'vendor', 'payee', 'currency', 'department', 'project'];
   const sheetOpen = activeSheet !== null && optionSheetKinds.includes(activeSheet as OptionSheetKind);
@@ -505,10 +663,10 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
       </View>
       <View style={styles.scopeRow}>
         <Building2 size={14} color={theme.textTertiary} strokeWidth={1.75} />
-        <Text style={styles.scopeText} numberOfLines={1}>Acme Group</Text>
+        <Text style={styles.scopeText} numberOfLines={1}>{currentOrg?.name || 'No organisation'}</Text>
         <Text style={styles.scopeDot}>·</Text>
         <MapPin size={14} color={theme.textTertiary} strokeWidth={1.75} />
-        <Text style={styles.scopeText} numberOfLines={1}>Mumbai Office</Text>
+        <Text style={styles.scopeText} numberOfLines={1}>{currentBranch?.name || 'No branch'}</Text>
       </View>
 
       <ScrollView style={styles.flex} contentContainerStyle={styles.scrollContent}>
@@ -538,7 +696,7 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
           />
           <PickerField
             label="Expense Category" required
-            display={s.category || 'Select expense category'}
+            display={getCategoryName(s.category)}
             filled={!!s.category}
             error={err.category}
             helper={!err.category ? 'From Expenses → Categories' : undefined}
@@ -547,7 +705,7 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
           />
           <PickerField
             label="Sub Category"
-            display={s.subCategory || 'Select sub category'}
+            display={getSubCategoryName(s.subCategory)}
             filled={!!s.subCategory}
             disabled={!s.category}
             helper={!s.category ? 'Select a category first' : 'From the chosen category'}
@@ -622,7 +780,7 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
           {s.payeeKind === 'Vendor' ? (
             <PickerField
               label="Vendor" required
-              display={s.vendor || 'Select vendor'}
+              display={getVendorName(s.vendor)}
               filled={!!s.vendor}
               error={err.payee}
               helper={!err.payee ? 'Managed under Vendors' : undefined}
@@ -633,10 +791,10 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
             <>
               <PickerField
                 label="Payee" required
-                display={s.payee || 'Select payee'}
+                display={getPayeeName(s.payee)}
                 filled={!!s.payee}
                 error={err.payee}
-                helper={!err.payee ? 'Managed under Settings → Payees' : undefined}
+                helper={!err.payee ? 'Managed under Other → Payees' : undefined}
                 onPress={() => openSheet('payee')}
               />
               <TextField
@@ -664,10 +822,10 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
             <>
               <PickerField
                 label="Payee" required
-                display={s.payee || 'Select payee'}
+                display={getPayeeName(s.payee)}
                 filled={!!s.payee}
                 error={err.payee}
-                helper={!err.payee ? 'Managed under Settings → Payees' : undefined}
+                helper={!err.payee ? 'Managed under Other → Payees' : undefined}
                 onPress={() => openSheet('payee')}
               />
               <TextField
@@ -791,16 +949,16 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
         >
           <PickerField
             label="Department"
-            display={s.department || 'Select department'}
+            display={getDepartmentName(s.department)}
             filled={!!s.department}
-            helper="Settings → Departments"
+            helper="Other → Departments"
             onPress={() => openSheet('department')}
           />
           <PickerField
             label="Project"
-            display={s.project || 'Select project'}
+            display={getProjectName(s.project)}
             filled={!!s.project}
-            helper="Settings → Projects"
+            helper="Other → Projects"
             onPress={() => openSheet('project')}
           />
           <Text style={styles.hintText}>Cost allocation is optional and can be set later.</Text>
@@ -868,8 +1026,8 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
           </View>
 
           <View style={styles.buttonRow}>
-            <SecondaryButton label="Previous" onPress={() => gotoStep(4)} />
-            <PrimaryButton label="Add Expense" flex onPress={onNextStep5} />
+            <SecondaryButton label="Previous" onPress={() => !isCreatingExpense && gotoStep(4)} />
+            <PrimaryButton label={isCreatingExpense ? 'Creating...' : 'Add Expense'} flex onPress={() => !isCreatingExpense && onNextStep5()} />
           </View>
         </StepCard>
       </ScrollView>
@@ -931,36 +1089,22 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
         </View>
       </Modal>
 
-      {/* Date picker sheet */}
-      <Modal visible={dateSheetOpen} transparent animationType="slide" onRequestClose={closeSheet}>
-        <View style={styles.sheetRoot}>
-          <Pressable style={StyleSheet.absoluteFill} onPress={closeSheet} />
-          <View style={[styles.sheet, styles.dateSheet]}>
-            <View style={styles.sheetHandleRow}><View style={styles.sheetHandle} /></View>
-            <View style={styles.sheetTitleRow}>
-              <Text style={styles.sheetTitle}>{dateSheetTitle}</Text>
-              <Pressable style={styles.sheetCloseButton} onPress={closeSheet}>
-                <X size={16} color={theme.textSecondary} strokeWidth={2} />
-              </Pressable>
-            </View>
-            <Text style={styles.calendarMonth}>October 2026</Text>
-            <ScrollView contentContainerStyle={styles.calendarGrid}>
-              {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => {
-                const selected = day === highlightDay;
-                return (
-                  <Pressable
-                    key={day}
-                    style={[styles.calendarDay, selected && styles.calendarDaySelected]}
-                    onPress={() => selectDay(day)}
-                  >
-                    <Text style={[styles.calendarDayText, selected && styles.calendarDayTextSelected]}>{day}</Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      {/* Date picker bottom sheet */}
+      <DatePickerSheet
+        visible={dateSheetOpen}
+        title={dateSheetTitle}
+        selectedDate={s.date || s.startDate || s.endDate || s.invoiceDate || s.billDueDate || s.billPeriodStart || s.billPeriodEnd}
+        onDateSelect={(dateStr) => {
+          if (activeSheet === 'date-expense') patch({ date: dateStr });
+          else if (activeSheet === 'date-start') patch({ startDate: dateStr });
+          else if (activeSheet === 'date-end') patch({ endDate: dateStr });
+          else if (activeSheet === 'date-invoice') patch({ invoiceDate: dateStr });
+          else if (activeSheet === 'date-due') patch({ billDueDate: dateStr });
+          else if (activeSheet === 'date-billstart') patch({ billPeriodStart: dateStr });
+          else if (activeSheet === 'date-billend') patch({ billPeriodEnd: dateStr });
+        }}
+        onClose={closeSheet}
+      />
 
       {/* Upload action sheet */}
       <Modal visible={uploadSheetOpen} transparent animationType="slide" onRequestClose={closeUploadSheet}>
@@ -987,29 +1131,41 @@ export default function AddExpenseScreen({ onBack }: { onBack: () => void }) {
         </View>
       </Modal>
 
-      <ConfirmDialog
+      <Dialog
         visible={showDiscardConfirm}
         title="Discard recurrence details?"
         description="Switching to one-time will clear the frequency, start date, and end date you entered."
-        confirmLabel="Discard"
-        onCancel={cancelDiscard}
-        onConfirm={confirmDiscard}
+        onDismiss={cancelDiscard}
+        buttons={[
+          { label: 'Cancel', onPress: cancelDiscard, type: 'cancel' },
+          { label: 'Discard', onPress: confirmDiscard, type: 'destructive' },
+        ]}
       />
-      <ConfirmDialog
+      <Dialog
         visible={showPayeeKindConfirm}
         title="Discard payee details?"
         description="Changing the payee kind will clear the payee and related fields you entered. Invoice details are kept."
-        confirmLabel="Discard"
-        onCancel={cancelPayeeKindSwitch}
-        onConfirm={confirmPayeeKindSwitch}
+        onDismiss={cancelPayeeKindSwitch}
+        buttons={[
+          { label: 'Cancel', onPress: cancelPayeeKindSwitch, type: 'cancel' },
+          { label: 'Discard', onPress: confirmPayeeKindSwitch, type: 'destructive' },
+        ]}
       />
-      <ConfirmDialog
+      <Dialog
         visible={showReplaceConfirm}
         title="Replace invoice file?"
         description="Only one invoice file is allowed. Uploading a new one replaces the current file."
-        confirmLabel="Replace"
-        onCancel={cancelReplace}
-        onConfirm={confirmReplace}
+        onDismiss={cancelReplace}
+        buttons={[
+          { label: 'Cancel', onPress: cancelReplace, type: 'cancel' },
+          { label: 'Replace', onPress: confirmReplace, type: 'destructive' },
+        ]}
+      />
+
+      <Toast
+        visible={toastVisible}
+        message={toastMessage}
+        type={toastType}
       />
     </SafeAreaView>
   );
@@ -1074,31 +1230,6 @@ function StepBadge({ number, state }: { number: number; state: StepState }) {
   return (
     <View style={[styles.badge, styles.badgeLocked]}>
       <Text style={styles.badgeTextLocked}>{number}</Text>
-    </View>
-  );
-}
-
-function TextField({
-  label, required, value, onChangeText, onBlur, placeholder, error, keyboardType,
-}: {
-  label: string; required?: boolean; value: string; onChangeText: (v: string) => void;
-  onBlur?: () => void; placeholder?: string; error?: string | null; keyboardType?: 'decimal-pad';
-}) {
-  return (
-    <View style={styles.fieldGroup}>
-      <Text style={[styles.label, error && styles.labelError]}>
-        {label}{required ? <Text style={styles.required}> *</Text> : null}
-      </Text>
-      <TextInput
-        style={[styles.input, error && styles.inputError]}
-        value={value}
-        onChangeText={onChangeText}
-        onBlur={onBlur}
-        placeholder={placeholder}
-        placeholderTextColor={theme.textTertiary}
-        keyboardType={keyboardType}
-      />
-      {error ? <Text style={styles.errorText}>{error}</Text> : null}
     </View>
   );
 }
@@ -1218,224 +1349,3 @@ function FileRow({ file, onRemove, onRetry }: { file: FileItem; onRemove: () => 
   );
 }
 
-function ConfirmDialog({
-  visible, title, description, confirmLabel, onCancel, onConfirm,
-}: {
-  visible: boolean; title: string; description: string; confirmLabel: string; onCancel: () => void; onConfirm: () => void;
-}) {
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
-      <View style={styles.confirmRoot}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onCancel} />
-        <View style={styles.confirmCard}>
-          <Text style={styles.confirmTitle}>{title}</Text>
-          <Text style={styles.confirmDescription}>{description}</Text>
-          <View style={styles.confirmActions}>
-            <Pressable style={styles.confirmCancel} onPress={onCancel}>
-              <Text style={styles.confirmCancelText}>Cancel</Text>
-            </Pressable>
-            <Pressable style={styles.confirmDestructive} onPress={onConfirm}>
-              <Text style={styles.confirmDestructiveText}>{confirmLabel}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Modal>
-  );
-}
-
-const styles = StyleSheet.create({
-  flex: { flex: 1 },
-  flex1: { flex: 1 },
-  container: { flex: 1, backgroundColor: theme.bgPage },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-    paddingHorizontal: space[6] - 10,
-    backgroundColor: theme.bgPage,
-  },
-  headerClose: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  scopeRow: {
-    flexDirection: 'row', alignItems: 'center', gap: space[1] + 2,
-    paddingHorizontal: space[6], paddingTop: space[1], paddingBottom: space[3],
-    backgroundColor: theme.bgPage,
-  },
-  scopeText: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
-  scopeDot: { fontSize: 13, color: theme.textTertiary },
-
-  scrollContent: { paddingHorizontal: space[6], paddingBottom: space[6], gap: space[3] },
-
-  blockedBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: space[2],
-    backgroundColor: theme.statusDangerBg, borderRadius: radius.md, padding: space[3] - 2,
-  },
-  blockedText: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDangerStrong, flex: 1 },
-
-  card: {
-    backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderSubtle,
-    borderRadius: radius.lg, overflow: 'hidden',
-  },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: space[3], padding: space[3], minHeight: 44 },
-  cardHeaderText: { flex: 1, minWidth: 0 },
-  cardHeaderTitle: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold' },
-  cardHeaderSummary: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: 2 },
-  cardHeaderError: { fontSize: 12, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDanger, marginTop: 2 },
-  cardBody: {
-    paddingHorizontal: space[4], paddingBottom: space[4], paddingTop: space[4],
-    borderTopWidth: 1, borderTopColor: theme.borderSubtle, gap: space[4],
-  },
-
-  badge: { width: 24, height: 24, borderRadius: radius.full, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
-  badgeBrand: { backgroundColor: theme.brandDefault },
-  badgeDanger: { backgroundColor: theme.statusDanger },
-  badgeLocked: { borderWidth: 1, borderColor: theme.borderStrong },
-  badgeText: { fontSize: 13, fontFamily: 'Urbanist_700Bold', color: theme.textOnBrand },
-  badgeTextLocked: { fontSize: 13, fontFamily: 'Urbanist_700Bold', color: theme.textTertiary },
-
-  fieldGroup: { gap: space[1] },
-  label: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  labelDisabled: { color: theme.textTertiary },
-  labelError: { color: theme.statusDanger },
-  required: { color: theme.statusDanger },
-  helperText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
-  errorText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.statusDanger },
-  noticeText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.statusWarning },
-  hintText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
-
-  input: {
-    minHeight: 44, paddingHorizontal: space[3], fontSize: 16, fontFamily: 'Urbanist_400Regular',
-    color: theme.textPrimary, backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-  },
-  inputError: { borderColor: theme.statusDanger },
-
-  amountRow: {
-    minHeight: 44, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
-    borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: space[1] + 2,
-  },
-  amountSymbol: { fontSize: 16, color: theme.textTertiary },
-  amountInput: { flex: 1, fontSize: 16, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, padding: 0 },
-
-  pickerRow: {
-    minHeight: 44, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
-    borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  pickerRowDisabled: { backgroundColor: theme.bgSunken, borderColor: theme.borderSubtle },
-  pickerText: { fontSize: 15, color: theme.textTertiary, flex: 1 },
-  pickerTextFilled: { color: theme.textPrimary },
-  pickerTextDisabled: { color: theme.textDisabled },
-
-  subGroup: {
-    borderLeftWidth: 2, borderLeftColor: theme.borderDefault, paddingLeft: space[3], marginLeft: 2, gap: space[4],
-  },
-
-  toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 },
-  toggleLabel: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  toggleTrack: { width: 44, height: 26, borderRadius: radius.full, backgroundColor: theme.borderStrong },
-  toggleTrackOn: { backgroundColor: theme.brandDefault },
-  toggleThumb: { position: 'absolute', top: 3, left: 3, width: 20, height: 20, borderRadius: radius.full, backgroundColor: '#FFFFFF' },
-  toggleThumbOn: { left: 21 },
-
-  summaryCard: { backgroundColor: theme.bgSunken, borderRadius: radius.lg, padding: space[4], gap: space[2] },
-  summaryRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  summaryLabel: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textSecondary },
-  summaryValue: { fontSize: 16, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  summaryDivider: {
-    borderTopWidth: 1, borderTopColor: theme.borderDefault, marginTop: space[1],
-    paddingTop: space[2], flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  netLabel: { fontSize: 15, fontFamily: 'Urbanist_700Bold', color: theme.textPrimary },
-  netValue: { fontSize: 24, fontFamily: 'Urbanist_700Bold', color: theme.textPrimary },
-  warningText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.statusWarning, marginTop: space[1] },
-
-  buttonRow: { flexDirection: 'row', gap: space[2] },
-  primaryButton: {
-    minHeight: 44, paddingHorizontal: space[5], backgroundColor: theme.brandDefault, borderRadius: radius.md,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  primaryButtonText: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textOnBrand },
-  secondaryButton: {
-    minHeight: 44, paddingHorizontal: space[4], borderWidth: 1, borderColor: theme.borderDefault,
-    borderRadius: radius.md, alignItems: 'center', justifyContent: 'center',
-  },
-  secondaryButtonText: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-
-  fileRow: { flexDirection: 'row', alignItems: 'center', gap: space[3], padding: space[2] + 2, backgroundColor: theme.bgSunken, borderRadius: radius.md },
-  fileIcon: { width: 36, height: 36, borderRadius: radius.md, backgroundColor: theme.bgRaised, alignItems: 'center', justifyContent: 'center' },
-  fileText: { flex: 1, minWidth: 0 },
-  fileName: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  fileMeta: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: 2 },
-  fileMetaError: { color: theme.statusDanger },
-  progressTrack: { height: 4, backgroundColor: theme.borderSubtle, borderRadius: radius.full, marginTop: space[1] + 2, overflow: 'hidden' },
-  progressFill: { height: '100%', backgroundColor: theme.brandDefault },
-  retryButton: { height: 32, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  retryButtonText: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  fileRemove: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
-
-  uploadDash: {
-    minHeight: 56, padding: space[3], backgroundColor: theme.bgSunken, borderWidth: 1, borderColor: theme.borderDefault,
-    borderStyle: 'dashed', borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: space[2],
-  },
-  uploadDashError: { borderColor: theme.statusDanger },
-  uploadDashText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.brandDefault },
-
-  textarea: {
-    minHeight: 96, padding: space[3], fontSize: 16, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary,
-    backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md,
-  },
-
-  footer: {
-    backgroundColor: theme.bgRaised, borderTopWidth: 1, borderTopColor: theme.borderSubtle,
-    paddingHorizontal: space[6], paddingTop: space[3], paddingBottom: space[3],
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-  },
-  footerActions: { flexDirection: 'row', gap: space[4] },
-  footerCancel: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  footerReset: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.statusDanger },
-  footerResetDisabled: { color: theme.textDisabled },
-  footerStep: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textTertiary },
-
-  sheetRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.bgOverlay },
-  sheet: { backgroundColor: theme.bgRaised, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl, ...shadow[4] },
-  optionSheet: { height: 560 },
-  dateSheet: { maxHeight: '70%' },
-  sheetHandleRow: { alignItems: 'center', paddingTop: space[3] },
-  sheetHandle: { width: 36, height: 4, borderRadius: radius.full, backgroundColor: theme.borderStrong },
-  sheetTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space[5], paddingTop: space[4] },
-  sheetTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  sheetCloseButton: { width: 36, height: 36, borderRadius: radius.full, backgroundColor: theme.bgSunken, alignItems: 'center', justifyContent: 'center' },
-  sheetSearchWrap: { paddingHorizontal: space[5], paddingTop: space[4] },
-  sheetSearchBar: { height: 40, paddingHorizontal: space[3], backgroundColor: theme.bgSunken, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  sheetSearchInput: { flex: 1, fontSize: 14, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, padding: 0 },
-  sheetOptionsList: { paddingHorizontal: space[5], paddingTop: space[3], paddingBottom: space[5] },
-  sheetOptionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space[3], minHeight: 44, borderBottomWidth: 1, borderBottomColor: theme.borderSubtle },
-  sheetOptionText: { fontSize: 15, color: theme.textPrimary },
-  sheetEmptyState: { alignItems: 'center', textAlign: 'center', paddingVertical: space[8], gap: space[2] },
-  emptyTitle: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, marginTop: space[2] },
-  emptySubtitle: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
-
-  calendarMonth: { textAlign: 'center', fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, paddingHorizontal: space[5], paddingTop: space[4], paddingBottom: space[2] },
-  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space[2], paddingHorizontal: space[5], paddingBottom: space[5] },
-  calendarDay: { width: 38, height: 38, borderRadius: radius.full, alignItems: 'center', justifyContent: 'center' },
-  calendarDaySelected: { backgroundColor: theme.brandDefault },
-  calendarDayText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  calendarDayTextSelected: { color: theme.textOnBrand },
-
-  uploadSheetTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, paddingHorizontal: space[5], paddingTop: space[4] },
-  uploadOptionsList: { paddingHorizontal: space[5], paddingTop: space[3], paddingBottom: space[6], gap: space[1] },
-  uploadOptionRow: { flexDirection: 'row', alignItems: 'center', gap: space[3], minHeight: 52 },
-  uploadOptionText: { fontSize: 15, color: theme.textPrimary },
-
-  confirmRoot: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: space[6], backgroundColor: theme.bgOverlay },
-  confirmCard: { backgroundColor: theme.bgRaised, borderRadius: radius.lg, padding: space[5], width: '100%', maxWidth: 320, ...shadow[4] },
-  confirmTitle: { fontSize: 16, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  confirmDescription: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[2], lineHeight: 18 },
-  confirmActions: { flexDirection: 'row', gap: space[2], marginTop: space[5], justifyContent: 'flex-end' },
-  confirmCancel: { height: 40, paddingHorizontal: space[4], borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  confirmCancelText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  confirmDestructive: { height: 40, paddingHorizontal: space[4], backgroundColor: theme.statusDanger, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center' },
-  confirmDestructiveText: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textOnBrand },
-});

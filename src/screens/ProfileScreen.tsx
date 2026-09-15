@@ -1,27 +1,43 @@
 import { useState } from 'react';
 import {
-  StyleSheet,
   Text,
   View,
   Pressable,
+  ActivityIndicator,
+  Modal,
 } from 'react-native';
-import { LogOut } from 'lucide-react-native';
+import { LogOut, ChevronLeft } from 'lucide-react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { radius, space, theme, type } from '../theme/tokens';
-import type { RootStackParamList } from '../../App';
+import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useAuth } from '../contexts/AuthContext';
 import { useUser } from '../contexts/UserContext';
-import Dialog from '../components/Dialog';
+import { styles } from './ProfileScreen.styles';
+import { theme } from '../theme/tokens';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Profile'>;
+
+const formatStatus = (status: string): string => {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+};
+
+const getStatusColor = (status: string): { bg: string; text: string } => {
+  switch (status.toLowerCase()) {
+    case 'active':
+      return { bg: theme.statusSuccessBg, text: theme.statusSuccessStrong };
+    case 'inactive':
+      return { bg: theme.statusDangerBg, text: theme.statusDangerStrong };
+    default:
+      return { bg: theme.bgRaised, text: theme.textPrimary };
+  }
+};
 
 export default function ProfileScreen({ navigation }: Props) {
   const [logoutDialogVisible, setLogoutDialogVisible] = useState(false);
   const [errorDialogVisible, setErrorDialogVisible] = useState(false);
   const { logout } = useAuth();
-  const { clearUser } = useUser();
+  const { clearUser, user, isLoading } = useUser();
 
   const handleLogoutConfirm = async () => {
     try {
@@ -38,87 +54,81 @@ export default function ProfileScreen({ navigation }: Props) {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
+        <Pressable style={styles.backButton} onPress={() => navigation.goBack()}>
+          <ChevronLeft size={22} color={theme.textPrimary} strokeWidth={1.75} />
+        </Pressable>
         <Text style={styles.title}>Profile</Text>
       </View>
 
       <View style={styles.content}>
-        <Pressable
-          style={styles.logoutButton}
-          onPress={() => setLogoutDialogVisible(true)}
-        >
-          <LogOut size={20} color={theme.statusDanger} />
-          <Text style={styles.logoutButtonText}>Logout</Text>
-        </Pressable>
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={theme.brandDefault} />
+          </View>
+        ) : user ? (
+          <>
+            <View style={styles.userCard}>
+              <Text style={styles.nameText}>{user.name}</Text>
+              <Text style={styles.emailText}>{user.email}</Text>
+              <View style={styles.statusContainer}>
+                <View style={[styles.statusChip, { backgroundColor: getStatusColor(user.status).bg }]}>
+                  <Text style={[styles.statusText, { color: getStatusColor(user.status).text }]}>
+                    {formatStatus(user.status)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <Pressable
+              style={styles.logoutButton}
+              onPress={() => setLogoutDialogVisible(true)}
+            >
+              <LogOut size={20} color={theme.statusDanger} />
+              <Text style={styles.logoutButtonText}>Logout</Text>
+            </Pressable>
+          </>
+        ) : null}
       </View>
 
-      <Dialog
-        visible={logoutDialogVisible}
-        title="Logout"
-        description="Are you sure you want to log out?"
-        buttons={[
-          {
-            label: 'Cancel',
-            type: 'cancel',
-            onPress: () => setLogoutDialogVisible(false),
-          },
-          {
-            label: 'Logout',
-            type: 'destructive',
-            onPress: handleLogoutConfirm,
-          },
-        ]}
-        onDismiss={() => setLogoutDialogVisible(false)}
-      />
+      <Modal visible={logoutDialogVisible} transparent animationType="fade" onRequestClose={() => setLogoutDialogVisible(false)}>
+        <Pressable style={styles.dialogOverlay} onPress={() => setLogoutDialogVisible(false)}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>Logout?</Text>
+            <Text style={styles.dialogMessage}>Are you sure you want to log out?</Text>
+            <View style={styles.dialogButtonRow}>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonCancel]}
+                onPress={() => setLogoutDialogVisible(false)}
+              >
+                <Text style={styles.dialogButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonDelete]}
+                onPress={handleLogoutConfirm}
+              >
+                <Text style={[styles.dialogButtonText, styles.dialogButtonDeleteText]}>Logout</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
 
-      <Dialog
-        visible={errorDialogVisible}
-        title="Error"
-        description="Failed to logout. Please try again."
-        buttons={[
-          {
-            label: 'OK',
-            type: 'primary',
-            onPress: () => setErrorDialogVisible(false),
-          },
-        ]}
-        onDismiss={() => setErrorDialogVisible(false)}
-      />
+      <Modal visible={errorDialogVisible} transparent animationType="fade" onRequestClose={() => setErrorDialogVisible(false)}>
+        <Pressable style={styles.dialogOverlay} onPress={() => setErrorDialogVisible(false)}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>Error</Text>
+            <Text style={styles.dialogMessage}>Failed to logout. Please try again.</Text>
+            <View style={styles.dialogButtonRow}>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonCancel]}
+                onPress={() => setErrorDialogVisible(false)}
+              >
+                <Text style={styles.dialogButtonText}>OK</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: theme.bgPage,
-  },
-  header: {
-    paddingHorizontal: space[6],
-    paddingVertical: space[4],
-    borderBottomWidth: 1,
-    borderBottomColor: theme.borderDefault,
-  },
-  title: {
-    ...type.h2,
-    color: theme.textPrimary,
-  },
-  content: {
-    flex: 1,
-    padding: space[6],
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[3],
-    paddingHorizontal: space[4],
-    paddingVertical: space[3],
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: theme.statusDanger,
-    backgroundColor: 'transparent',
-  },
-  logoutButtonText: {
-    ...type.body,
-    color: theme.statusDanger,
-  },
-});

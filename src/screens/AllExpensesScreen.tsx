@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   FlatList,
   Modal,
@@ -8,8 +9,10 @@ import {
   Text,
   TextInput,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   ArrowUpDown,
   Check,
@@ -25,28 +28,19 @@ import {
   Search,
   Trash2,
   X,
+  AlertCircle,
 } from 'lucide-react-native';
 
-import { colors, radius, space, theme } from '../theme/tokens';
+import { useAuth } from '../contexts/AuthContext';
+import { useUser } from '../contexts/UserContext';
+import { useGetExpenses, useGetVendors, useGetExpenseCategories, useGetDepartments, useDeleteExpense } from '../api/expenses';
+import { mapExpenseFromApi, type MappedExpense } from '../utils/mapExpenseFormData';
+import Toast from '../components/Toast';
+import { styles } from './AllExpensesScreen.styles';
+import { theme, space, colors } from '../theme/tokens';
 
 type Status = 'approved' | 'pending' | 'rejected' | 'draft' | 'paid';
-
-type Expense = {
-  id: string;
-  title: string;
-  vendor: string;
-  category: 'Opex' | 'Capex';
-  amount: number;
-  amountLabel: string;
-  status: Status;
-  dueLabel: string | null;
-  expenseDateLabel: string;
-  invoiceId: string;
-  categoryDetail: string;
-  subcategory: string;
-  department: string;
-  attachments: { name: string; size: string; uploaded: string; kind: 'pdf' | 'image' | 'sheet' }[];
-};
+type Expense = MappedExpense;
 
 const STATUS_CONFIG: Record<Status, { label: string; bg: string; color: string; locked: boolean }> = {
   approved: { label: 'Approved', bg: theme.statusSuccessBg, color: theme.statusSuccessStrong, locked: true },
@@ -63,92 +57,6 @@ const FILTER_CHIPS: { key: 'all' | Status; label: string }[] = [
   { key: 'rejected', label: 'Rejected' },
 ];
 
-const EXPENSES: Expense[] = [
-  {
-    id: 'exp-1',
-    title: 'Team offsite catering',
-    vendor: 'Priya Caterers',
-    category: 'Opex',
-    amount: 42000,
-    amountLabel: '₹42,000',
-    status: 'approved',
-    dueLabel: 'Due Oct 25, 2026',
-    expenseDateLabel: 'Oct 8, 2026',
-    invoiceId: 'INV-8790',
-    categoryDetail: 'Events',
-    subcategory: 'Catering',
-    department: 'HR',
-    attachments: [],
-  },
-  {
-    id: 'exp-2',
-    title: 'Server hosting renewal',
-    vendor: 'AWS India',
-    category: 'Capex',
-    amount: 1000001,
-    amountLabel: '₹1,000,001',
-    status: 'pending',
-    dueLabel: 'Due Nov 2, 2026',
-    expenseDateLabel: 'Oct 15, 2026',
-    invoiceId: 'INV-8899',
-    categoryDetail: 'Infrastructure',
-    subcategory: 'Hosting',
-    department: 'Engineering',
-    attachments: [],
-  },
-  {
-    id: 'exp-3',
-    title: 'Client gift hampers',
-    vendor: 'Corporate Gifts Co',
-    category: 'Opex',
-    amount: 8400,
-    amountLabel: '₹8,400',
-    status: 'rejected',
-    dueLabel: 'Due Oct 18, 2026',
-    expenseDateLabel: 'Oct 12, 2026',
-    invoiceId: 'INV-8821',
-    categoryDetail: 'Employee Engagement',
-    subcategory: 'Gifting',
-    department: 'Admin',
-    attachments: [
-      { name: 'Invoice_8821_final.pdf', size: '240 KB', uploaded: 'Oct 12, 2026', kind: 'pdf' },
-      { name: 'Receipt_scan.jpg', size: '1.1 MB', uploaded: 'Oct 12, 2026', kind: 'image' },
-      { name: 'Cost_breakdown.xlsx', size: '64 KB', uploaded: 'Oct 11, 2026', kind: 'sheet' },
-    ],
-  },
-  {
-    id: 'exp-4',
-    title: 'Office chairs',
-    vendor: 'Featherlite',
-    category: 'Capex',
-    amount: 56000,
-    amountLabel: '₹56,000',
-    status: 'draft',
-    dueLabel: null,
-    expenseDateLabel: 'Oct 20, 2026',
-    invoiceId: 'Not generated',
-    categoryDetail: 'Furniture',
-    subcategory: 'Seating',
-    department: 'Admin',
-    attachments: [],
-  },
-  {
-    id: 'exp-5',
-    title: 'Electricity backup AMC',
-    vendor: 'PowerCare Services',
-    category: 'Opex',
-    amount: 124500,
-    amountLabel: '₹1,24,500',
-    status: 'paid',
-    dueLabel: 'Due Oct 10, 2026',
-    expenseDateLabel: 'Sep 28, 2026',
-    invoiceId: 'INV-8654',
-    categoryDetail: 'Utilities',
-    subcategory: 'AMC',
-    department: 'Facilities',
-    attachments: [],
-  },
-];
 
 type SortKey = 'expenseDateDesc' | 'expenseDateAsc' | 'dueDateAsc' | 'dueDateDesc' | 'amountDesc' | 'amountAsc';
 
@@ -182,25 +90,131 @@ export default function AllExpensesScreen({
   onAddExpense: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
+  const { token } = useAuth();
+  const { user } = useUser();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('expenseDateDesc');
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
   const [attachmentsFor, setAttachmentsFor] = useState<Expense | null>(null);
-  const [expenses, setExpenses] = useState(EXPENSES);
+
+  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState<Expense | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('success');
+
+  const { mutateAsync: deleteExpense, isPending: isDeleting } = useDeleteExpense();
+
+  const orgId = user?.current_context.organisation_id || null;
+  const branchId = user?.current_context.branch_id || null;
+
+  // Reset page and expenses when org/branch changes
+  useEffect(() => {
+    console.log('[AllExpensesScreen] Org/branch changed:', { orgId, branchId });
+    setAllExpenses([]);
+    setPage(0);
+    setHasMore(true);
+  }, [orgId, branchId]);
+
+  // Fetch vendors, categories, and departments
+  const { data: vendorsData } = useGetVendors();
+  const { data: categoriesData } = useGetExpenseCategories();
+  const { data: departmentsData } = useGetDepartments();
+
+  // Fetch expenses for current page
+  const { data: expensesData, isLoading: isLoadingExpenses, isError } = useGetExpenses(
+    orgId || '',
+    branchId || '',
+    page * 20,
+    20
+  );
+
+  // Process incoming expense data
+  useEffect(() => {
+    if (!expensesData || !vendorsData || !categoriesData || !departmentsData) {
+      console.log('[AllExpensesScreen] Waiting for data:', {
+        hasExpenses: !!expensesData,
+        hasVendors: !!vendorsData,
+        hasCategories: !!categoriesData,
+        hasDepartments: !!departmentsData,
+      });
+      return;
+    }
+
+    console.log('[AllExpensesScreen] Processing expenses:', {
+      expensesCount: expensesData.items.length,
+      vendorsCount: vendorsData.items.length,
+      categoriesCount: categoriesData.items.length,
+      departmentsCount: departmentsData.items.length,
+    });
+
+    const vendorsMap = new Map<string, { id: string; name: string }>();
+    const categoriesMap = new Map<string, { id: string; name: string }>();
+    const departmentsMap = new Map<string, { id: string; name: string }>();
+
+    vendorsData.items.forEach((v) => vendorsMap.set(v.id, { id: v.id, name: v.name }));
+    categoriesData.items.forEach((c) => categoriesMap.set(c.id, { id: c.id, name: c.name }));
+    departmentsData.items.forEach((d) => departmentsMap.set(d.id, { id: d.id, name: d.name }));
+
+    const mapped = expensesData.items.map((item) =>
+      mapExpenseFromApi(item, categoriesMap, vendorsMap, departmentsMap)
+    );
+
+    console.log('[AllExpensesScreen] Mapped expenses:', mapped.length);
+    setAllExpenses((prev) => [...prev, ...mapped]);
+    setLoadingMore(false);
+    setHasMore(expensesData.items.length === 20);
+  }, [expensesData, vendorsData, categoriesData, departmentsData]);
+
+  const handleLoadMore = useCallback(() => {
+    if (!loadingMore && hasMore && !isLoadingExpenses) {
+      console.log('[AllExpensesScreen] Loading more...');
+      setLoadingMore(true);
+      setPage((prev) => prev + 1);
+    }
+  }, [loadingMore, hasMore, isLoadingExpenses]);
+
+  const handleDeleteConfirm = async () => {
+    if (!expenseToDelete) return;
+    try {
+      await deleteExpense(expenseToDelete.id);
+      setAllExpenses((prev) => prev.filter((e) => e.id !== expenseToDelete.id));
+      setDeleteDialogVisible(false);
+      setExpenseToDelete(null);
+      setToastMessage('Expense deleted successfully');
+      setToastType('success');
+      setToastVisible(true);
+      // Invalidate expenses query to ensure fresh data
+      await queryClient.invalidateQueries({ queryKey: ['expenses'] });
+    } catch (err: any) {
+      const message = err?.data?.detail || err?.data?.message || err?.message || 'Failed to delete expense';
+      setToastMessage(message);
+      setToastType('error');
+      setToastVisible(true);
+      console.error('[AllExpensesScreen] Delete failed:', err);
+    }
+  };
 
   const filtered = useMemo(() => {
-    const byFilter = filter === 'all' ? expenses : expenses.filter((e) => e.status === filter);
+    const byFilter = filter === 'all' ? allExpenses : allExpenses.filter((e) => e.status === filter);
     const q = query.trim().toLowerCase();
     const byQuery = q
       ? byFilter.filter((e) => e.title.toLowerCase().includes(q) || e.vendor.toLowerCase().includes(q))
       : byFilter;
     return sortExpenses(byQuery, sortKey);
-  }, [expenses, filter, query, sortKey]);
+  }, [allExpenses, filter, query, sortKey]);
 
   const isSearching = query.trim().length > 0;
   const isEmpty = filtered.length === 0;
+  const isInitialLoading = page === 0 && isLoadingExpenses && allExpenses.length === 0;
 
   return (
     <SafeAreaView style={styles.flex} edges={['top', 'bottom', 'left', 'right']}>
@@ -253,7 +267,18 @@ export default function AllExpensesScreen({
       </ScrollView>
 
       <View style={styles.contentContainer}>
-        {isEmpty ? (
+        {isInitialLoading ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator size="large" color={theme.brandDefault} />
+            <Text style={styles.loadingText}>Loading expenses...</Text>
+          </View>
+        ) : isError || error ? (
+          <View style={styles.errorState}>
+            <AlertCircle size={40} color={theme.statusDanger} strokeWidth={1.75} />
+            <Text style={styles.emptyTitle}>Something went wrong</Text>
+            <Text style={styles.emptySubtitle}>{error || 'Failed to load expenses'}</Text>
+          </View>
+        ) : isEmpty ? (
           <View style={styles.emptyState}>
             {isSearching ? (
               <>
@@ -283,11 +308,21 @@ export default function AllExpensesScreen({
                   setExpandedId((current) => (current === item.id ? null : item.id))
                 }
                 onOpenAttachments={() => setAttachmentsFor(item)}
-                onDelete={() =>
-                  setExpenses((current) => current.filter((e) => e.id !== item.id))
-                }
+                onDelete={() => {
+                  setExpenseToDelete(item);
+                  setDeleteDialogVisible(true);
+                }}
               />
             )}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={
+              loadingMore && hasMore ? (
+                <View style={styles.loadingMore}>
+                  <ActivityIndicator size="small" color={theme.brandDefault} />
+                </View>
+              ) : null
+            }
           />
         )}
       </View>
@@ -307,6 +342,40 @@ export default function AllExpensesScreen({
       />
 
       <AttachmentsSheet expense={attachmentsFor} onClose={() => setAttachmentsFor(null)} />
+
+      <Modal visible={deleteDialogVisible} transparent animationType="fade" onRequestClose={() => setDeleteDialogVisible(false)}>
+        <Pressable style={styles.dialogOverlay} onPress={() => setDeleteDialogVisible(false)}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>Delete expense?</Text>
+            <Text style={styles.dialogMessage}>This action cannot be undone.</Text>
+            <View style={styles.dialogButtonRow}>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonCancel]}
+                onPress={() => setDeleteDialogVisible(false)}
+                disabled={isDeleting}
+              >
+                <Text style={styles.dialogButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonDelete]}
+                onPress={handleDeleteConfirm}
+                disabled={isDeleting}
+              >
+                <Text style={[styles.dialogButtonText, styles.dialogButtonDeleteText]}>
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Toast
+        visible={toastVisible}
+        message={toastMessage}
+        type={toastType}
+        onHide={() => setToastVisible(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -512,374 +581,3 @@ function AttachmentsSheet({ expense, onClose }: { expense: Expense | null; onClo
     </Modal>
   );
 }
-
-const shadowFab = {
-  shadowColor: '#080a0b',
-  shadowOpacity: 0.1,
-  shadowRadius: 16,
-  shadowOffset: { width: 0, height: 6 },
-  elevation: 4,
-};
-
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-    backgroundColor: theme.bgPage,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-    paddingHorizontal: space[6] - 10,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  searchRow: {
-    flexDirection: 'row',
-    gap: space[2],
-    marginTop: space[3],
-    paddingHorizontal: space[6],
-  },
-  searchBar: {
-    flex: 1,
-    height: 44,
-    paddingHorizontal: space[3],
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-  },
-  searchBarActive: {
-    borderColor: theme.brandDefault,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textPrimary,
-    padding: 0,
-  },
-  sortButton: {
-    width: 44,
-    height: 44,
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chipRow: {
-    marginTop: space[3],
-    marginBottom: space[3],
-    flexGrow: 0,
-  },
-  chipRowContent: {
-    gap: space[2],
-    paddingHorizontal: space[6],
-  },
-  chip: {
-    height: 28,
-    paddingHorizontal: space[3],
-    borderRadius: radius.full,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    backgroundColor: theme.bgRaised,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  chipActive: {
-    borderColor: theme.brandDefault,
-    backgroundColor: theme.brandSubtle,
-  },
-  chipText: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_500Medium',
-    color: theme.textPrimary,
-  },
-  chipTextActive: {
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.brandActive,
-  },
-  contentContainer: { flex: 1 },
-  listContent: {
-    paddingHorizontal: space[6],
-    paddingTop: space[4],
-    paddingBottom: 112,
-  },
-  emptyState: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: space[6],
-    gap: space[2],
-  },
-  emptyTitle: {
-    fontSize: 14,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-    marginTop: space[2],
-    textAlign: 'center',
-  },
-  emptyTitleLg: {
-    fontSize: 15,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textSecondary,
-    textAlign: 'center',
-  },
-  card: {
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderSubtle,
-    borderRadius: radius.lg,
-    padding: space[4],
-  },
-  cardTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space[3],
-  },
-  cardTitle: {
-    flex: 1,
-    fontSize: 15,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  categoryBadge: {
-    height: 20,
-    paddingHorizontal: space[2],
-    borderRadius: radius.full,
-    backgroundColor: colors.slate50,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  categoryBadgeText: {
-    fontSize: 12,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: colors.slate600,
-  },
-  cardMidRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space[3],
-    marginTop: space[1] + 2,
-  },
-  cardVendor: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textSecondary,
-  },
-  cardAmountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-  },
-  cardAmount: {
-    fontSize: 15,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-    fontVariant: ['tabular-nums'],
-  },
-  chevronUp: {
-    transform: [{ rotate: '180deg' }],
-  },
-  cardBottomRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: space[3],
-    marginTop: space[1] + 2,
-  },
-  cardDue: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textSecondary,
-  },
-  statusBadge: {
-    height: 20,
-    paddingHorizontal: space[2],
-    borderRadius: radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statusBadgeText: {
-    fontSize: 12,
-    fontFamily: 'Urbanist_600SemiBold',
-  },
-  details: {
-    borderTopWidth: 1,
-    borderTopColor: theme.borderSubtle,
-    marginTop: space[3],
-    paddingTop: space[3],
-  },
-  detailGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space[3] + 4,
-  },
-  detailField: {
-    width: '45%',
-  },
-  detailLabel: {
-    fontSize: 12,
-    fontFamily: 'Urbanist_500Medium',
-    color: theme.textTertiary,
-  },
-  detailValue: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textPrimary,
-    marginTop: 2,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: space[2],
-    marginTop: space[4],
-  },
-  actionButton: {
-    height: 32,
-    paddingHorizontal: space[3],
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[1] + 2,
-  },
-  actionButtonText: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  fab: {
-    position: 'absolute',
-    right: space[5],
-    width: 56,
-    height: 56,
-    borderRadius: radius.xl,
-    backgroundColor: theme.brandDefault,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...shadowFab,
-  },
-  sheetRoot: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: theme.bgOverlay,
-  },
-  sheet: {
-    backgroundColor: theme.bgRaised,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
-  },
-  attachmentsSheet: {
-    height: 480,
-  },
-  sheetHandleRow: {
-    alignItems: 'center',
-    paddingTop: space[3],
-  },
-  sheetHandle: {
-    width: 36,
-    height: 4,
-    borderRadius: radius.full,
-    backgroundColor: theme.borderStrong,
-  },
-  sheetTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space[5],
-    paddingTop: space[4],
-  },
-  sheetTitle: {
-    fontSize: 18,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  sheetCloseButton: {
-    width: 36,
-    height: 36,
-    borderRadius: radius.full,
-    backgroundColor: theme.bgSunken,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sortRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: space[3] + 2,
-    minHeight: 44,
-  },
-  sortRowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: theme.borderSubtle,
-  },
-  sortRowText: {
-    fontSize: 15,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textPrimary,
-  },
-  sortRowTextActive: {
-    fontFamily: 'Urbanist_600SemiBold',
-  },
-  attachmentsList: {
-    paddingHorizontal: space[5],
-    paddingTop: space[3],
-    paddingBottom: space[5],
-    gap: space[2],
-  },
-  attachmentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[3],
-  },
-  attachmentIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  attachmentText: {
-    flex: 1,
-  },
-  attachmentName: {
-    fontSize: 15,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  attachmentMeta: {
-    fontSize: 12,
-    fontFamily: 'Urbanist_400Regular',
-    color: theme.textSecondary,
-    marginTop: 2,
-  },
-  attachmentsEmpty: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: space[6],
-    gap: space[2],
-  },
-});

@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { User, Organisation, Branch, CurrentContext, UserState } from '../types/user';
 
 const USER_KEY = 'user_data';
+const CURRENT_CONTEXT_KEY = 'current_context';
 
 // Simple in-memory storage fallback for managed Expo
 const memoryStorage: Record<string, string> = {};
@@ -23,8 +25,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
     isLoading: true,
   });
 
-  React.useEffect(() => {
-    restoreUser();
+  useEffect(() => {
+    initializeUser();
   }, []);
 
   const restoreUser = async () => {
@@ -32,6 +34,18 @@ export function UserProvider({ children }: { children: ReactNode }) {
       const userData = memoryStorage[USER_KEY];
       if (userData) {
         const user = JSON.parse(userData) as User;
+
+        try {
+          const savedContext = await AsyncStorage.getItem(CURRENT_CONTEXT_KEY);
+          if (savedContext) {
+            const context = JSON.parse(savedContext) as CurrentContext;
+            user.current_context = context;
+            console.log('[UserContext] Restored saved context:', context);
+          }
+        } catch (storageError) {
+          console.warn('AsyncStorage unavailable, using context from memory:', storageError);
+        }
+
         setState({
           user,
           isLoading: false,
@@ -51,13 +65,29 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const initializeUser = async () => {
+    try {
+      await restoreUser();
+    } catch (error) {
+      console.error('[UserContext] Init error:', error);
+    }
+  };
+
   const setUser = async (user: User) => {
     try {
+      console.log('[UserContext.setUser] Called with:', { email: user.email, orgs: user.organisations.length, context: user.current_context });
       memoryStorage[USER_KEY] = JSON.stringify(user);
+      try {
+        await AsyncStorage.setItem(CURRENT_CONTEXT_KEY, JSON.stringify(user.current_context));
+        console.log('[UserContext.setUser] Saved context to AsyncStorage:', user.current_context);
+      } catch (storageError) {
+        console.warn('AsyncStorage unavailable, using memory storage only:', storageError);
+      }
       setState({
         user,
         isLoading: false,
       });
+      console.log('[UserContext.setUser] State updated successfully');
     } catch (error) {
       console.error('Failed to save user:', error);
       throw error;
@@ -67,6 +97,11 @@ export function UserProvider({ children }: { children: ReactNode }) {
   const clearUser = async () => {
     try {
       delete memoryStorage[USER_KEY];
+      try {
+        await AsyncStorage.removeItem(CURRENT_CONTEXT_KEY);
+      } catch (storageError) {
+        console.warn('AsyncStorage unavailable during logout:', storageError);
+      }
       setState({
         user: null,
         isLoading: false,
@@ -78,20 +113,24 @@ export function UserProvider({ children }: { children: ReactNode }) {
   };
 
   const getCurrentOrganisation = (): Organisation | null => {
-    if (!state.user) return null;
-    return (
-      state.user.organisations.find((org) => org.id === state.user!.current_context.organisation_id) ||
-      null
-    );
+    if (!state.user) {
+      console.log('[UserContext.getCurrentOrganisation] No user');
+      return null;
+    }
+    const result = state.user.organisations.find((org) => org.id === state.user!.current_context.organisation_id) || null;
+    console.log('[UserContext.getCurrentOrganisation] Looking for:', state.user.current_context.organisation_id, 'Found:', result?.name);
+    return result;
   };
 
   const getCurrentBranch = (): Branch | null => {
     const currentOrg = getCurrentOrganisation();
-    if (!currentOrg) return null;
-    return (
-      currentOrg.branches.find((branch) => branch.id === state.user!.current_context.branch_id) ||
-      null
-    );
+    if (!currentOrg) {
+      console.log('[UserContext.getCurrentBranch] No current org');
+      return null;
+    }
+    const result = currentOrg.branches.find((branch) => branch.id === state.user!.current_context.branch_id) || null;
+    console.log('[UserContext.getCurrentBranch] Looking for:', state.user!.current_context.branch_id, 'Found:', result?.name);
+    return result;
   };
 
   const setCurrentContext = async (context: CurrentContext) => {
@@ -102,6 +141,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
         current_context: context,
       };
       memoryStorage[USER_KEY] = JSON.stringify(updatedUser);
+      try {
+        await AsyncStorage.setItem(CURRENT_CONTEXT_KEY, JSON.stringify(context));
+        console.log('[UserContext] Saved context to AsyncStorage:', context);
+      } catch (storageError) {
+        console.warn('AsyncStorage unavailable, using memory storage only:', storageError);
+      }
       setState({
         user: updatedUser,
         isLoading: false,

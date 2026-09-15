@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   BarChart3,
   Bell,
+  Briefcase,
   Building2,
   CalendarClock,
   ChevronDown,
@@ -19,42 +20,21 @@ import {
   MapPin,
   Package,
   Search,
+  Settings,
   Truck,
+  Users,
   Wrench,
   type LucideIcon,
 } from 'lucide-react-native';
 
-import { colors, radius, space, theme, type, vizTint } from '../theme/tokens';
 import ScopeSheet, { type Organisation } from '../components/ScopeSheet';
-import type { RootStackParamList } from '../../App';
+import type { RootStackParamList } from '../navigation/RootNavigator';
+import { useUser } from '../contexts/UserContext';
+import Toast from '../components/Toast';
+import { styles } from './DashboardScreen.styles';
+import { theme, colors, vizTint } from '../theme/tokens';
 
 type DashboardNavigationProp = NativeStackNavigationProp<RootStackParamList>;
-
-const ORGS: Organisation[] = [
-  {
-    id: 'acme-industries',
-    name: 'Acme Industries Pvt Ltd',
-    branches: [
-      { id: 'andheri-east', name: 'Andheri East', city: 'Mumbai' },
-      { id: 'powai-office', name: 'Powai Office', city: 'Mumbai' },
-      { id: 'hdfc-tower-3f', name: 'HDFC Tower 3F', city: 'Mumbai' },
-      { id: 'cyber-city-11f', name: 'Cyber City 11F', city: 'Gurugram' },
-    ],
-  },
-  {
-    id: 'acme-logistics',
-    name: 'Acme Logistics Pvt Ltd',
-    branches: [
-      { id: 'whitefield-campus', name: 'Whitefield Campus', city: 'Bengaluru' },
-      { id: 'whitefield-annex', name: 'Whitefield Annex', city: 'Bengaluru' },
-    ],
-  },
-  {
-    id: 'acme-realty',
-    name: 'Acme Realty Pvt Ltd',
-    branches: [],
-  },
-];
 
 type SectionItem = {
   Icon: LucideIcon;
@@ -82,13 +62,13 @@ const SECTION_GROUPS: SectionGroup[] = [
         tint: vizTint.viz1,
         screen: 'AllExpenses',
       },
-      {
-        Icon: FileClock,
-        title: 'Draft expenses',
-        subtitle: 'Created but not yet submitted',
-        color: colors.viz1,
-        tint: vizTint.viz1,
-      },
+      // {
+      //   Icon: FileClock,
+      //   title: 'Draft expenses',
+      //   subtitle: 'Created but not yet submitted',
+      //   color: colors.viz1,
+      //   tint: vizTint.viz1,
+      // },
       {
         Icon: Folder,
         title: 'Categories',
@@ -96,19 +76,6 @@ const SECTION_GROUPS: SectionGroup[] = [
         color: colors.viz1,
         tint: vizTint.viz1,
         screen: 'Categories',
-      },
-    ],
-  },
-  {
-    label: 'Procurement',
-    items: [
-      {
-        Icon: Truck,
-        title: 'Vendors',
-        subtitle: 'Vendor directory and contact details',
-        color: colors.viz2,
-        tint: vizTint.viz2,
-        screen: 'Vendors',
       },
     ],
   },
@@ -123,11 +90,12 @@ const SECTION_GROUPS: SectionGroup[] = [
         tint: vizTint.viz3,
       },
       {
-        Icon: MapPin,
-        title: 'Branches',
-        subtitle: 'Branches under the selected organisation',
+        Icon: Truck,
+        title: 'Vendors',
+        subtitle: 'Vendor directory and contact details',
         color: colors.viz3,
         tint: vizTint.viz3,
+        screen: 'Vendors',
       },
     ],
   },
@@ -150,6 +118,32 @@ const SECTION_GROUPS: SectionGroup[] = [
         Icon: Wrench,
         title: 'Maintenance',
         subtitle: 'Requests, work orders and schedules',
+        color: colors.viz5,
+        tint: vizTint.viz5,
+      },
+    ],
+  },
+  {
+    label: 'Other',
+    items: [
+      {
+        Icon: Users,
+        title: 'Payees',
+        subtitle: 'Payee directory and management',
+        color: colors.viz5,
+        tint: vizTint.viz5,
+      },
+      {
+        Icon: Building2,
+        title: 'Departments',
+        subtitle: 'Department configuration and details',
+        color: colors.viz5,
+        tint: vizTint.viz5,
+      },
+      {
+        Icon: Briefcase,
+        title: 'Projects',
+        subtitle: 'Project tracking and allocation',
         color: colors.viz5,
         tint: vizTint.viz5,
       },
@@ -193,17 +187,56 @@ const KPI_CARDS: {
 
 export default function DashboardScreen() {
   const navigation = useNavigation<DashboardNavigationProp>();
-  const [orgId, setOrgId] = useState(ORGS[0].id);
-  const [branchId, setBranchId] = useState<string | null>(ORGS[0].branches[0].id);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetTab, setSheetTab] = useState<'organisation' | 'branch'>('organisation');
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
 
-  const org = ORGS.find((o) => o.id === orgId)!;
-  const branch = org.branches.find((b) => b.id === branchId) ?? null;
+  const { isLoading, getOrganisations, getCurrentOrganisation, getCurrentBranch, setCurrentContext, user } = useUser();
+  const organisations = getOrganisations();
+
+  const getUserInitials = (): string => {
+    if (!user?.name) return '?';
+    return user.name
+      .split(' ')
+      .map((word) => word[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  };
+  const currentOrg = getCurrentOrganisation();
+  const currentBranch = getCurrentBranch();
+
+  console.log('[Dashboard] Rendering - isLoading:', isLoading, 'currentOrg:', currentOrg?.name, 'currentBranch:', currentBranch?.name, 'orgs:', organisations.length);
+
+  if (isLoading || !currentOrg || !currentBranch) {
+    console.log('[Dashboard] Showing loading state - isLoading:', isLoading, 'currentOrg:', !!currentOrg, 'currentBranch:', !!currentBranch);
+    return (
+      <SafeAreaView style={styles.flex} edges={['top', 'bottom', 'left', 'right']}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={theme.brandDefault} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   const openSheet = (tab: 'organisation' | 'branch') => {
     setSheetTab(tab);
     setSheetOpen(true);
+  };
+
+  const handleApply = async (newOrgId: string, newBranchId: string | null) => {
+    try {
+      if (!newBranchId) return;
+      await setCurrentContext({
+        organisation_id: newOrgId,
+        branch_id: newBranchId,
+      });
+      setSheetOpen(false);
+    } catch (error) {
+      setToastMessage('Failed to update organisation/branch');
+      setToastVisible(true);
+    }
   };
 
   return (
@@ -231,7 +264,7 @@ export default function DashboardScreen() {
               style={styles.avatar}
               onPress={() => navigation.navigate('Profile')}
             >
-              <Text style={styles.avatarText}>JS</Text>
+              <Text style={styles.avatarText}>{getUserInitials()}</Text>
             </Pressable>
           </View>
         </View>
@@ -240,14 +273,14 @@ export default function DashboardScreen() {
           <Pressable style={styles.scopePill} onPress={() => openSheet('organisation')}>
             <Building2 size={16} color={theme.textTertiary} strokeWidth={1.75} />
             <Text style={styles.scopePillText} numberOfLines={1}>
-              {org.name}
+              {currentOrg.name}
             </Text>
             <ChevronDown size={16} color={theme.textTertiary} strokeWidth={2} />
           </Pressable>
           <Pressable style={styles.scopePill} onPress={() => openSheet('branch')}>
             <MapPin size={16} color={theme.textTertiary} strokeWidth={1.75} />
             <Text style={styles.scopePillText} numberOfLines={1}>
-              {branch ? branch.name : 'No branch'}
+              {currentBranch.name}
             </Text>
             <ChevronDown size={16} color={theme.textTertiary} strokeWidth={2} />
           </Pressable>
@@ -318,234 +351,19 @@ export default function DashboardScreen() {
       <ScopeSheet
         visible={sheetOpen}
         initialTab={sheetTab}
-        orgs={ORGS}
-        selectedOrgId={orgId}
-        selectedBranchId={branchId}
-        onApply={(newOrgId, newBranchId) => {
-          setOrgId(newOrgId);
-          setBranchId(newBranchId);
-        }}
+        orgs={organisations}
+        selectedOrgId={currentOrg.id}
+        selectedBranchId={currentBranch.id}
+        onApply={handleApply}
         onClose={() => setSheetOpen(false)}
+      />
+
+      <Toast
+        visible={toastVisible}
+        message={toastMessage}
+        type="error"
+        onHide={() => setToastVisible(false)}
       />
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-    backgroundColor: theme.bgPage,
-  },
-  scrollContent: {
-    paddingBottom: 112,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: space[6],
-  },
-  logo: {
-    width: 120,
-    aspectRatio: 1376 / 768,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    gap: space[3],
-  },
-  bellWrap: {
-    width: 44,
-    height: 44,
-  },
-  bellButton: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.full,
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellBadge: {
-    position: 'absolute',
-    top: -2,
-    right: -2,
-    width: 18,
-    height: 18,
-    borderRadius: radius.full,
-    backgroundColor: theme.statusDanger,
-    borderWidth: 2,
-    borderColor: theme.bgPage,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  bellBadgeText: {
-    fontSize: 11,
-    fontFamily: 'Urbanist_700Bold',
-    color: theme.textInverse,
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.full,
-    backgroundColor: theme.brandSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_700Bold',
-    color: theme.brandDefault,
-  },
-  scopeRow: {
-    flexDirection: 'row',
-    gap: space[3],
-    marginTop: space[4],
-    paddingHorizontal: space[6],
-  },
-  scopePill: {
-    flex: 1,
-    height: 40,
-    paddingHorizontal: space[3],
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[1] + 2,
-  },
-  scopePillText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  searchBar: {
-    marginTop: space[4],
-    marginHorizontal: space[6],
-    height: 44,
-    paddingHorizontal: space[3],
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-  },
-  searchPlaceholder: {
-    ...type.body,
-    color: theme.textTertiary,
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    marginTop: space[6],
-    paddingHorizontal: space[6],
-  },
-  sectionHeaderTitle: {
-    ...type.h3,
-    color: theme.textPrimary,
-  },
-  showAll: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.brandDefault,
-  },
-  kpiGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: space[3],
-    marginTop: space[3],
-    paddingHorizontal: space[6],
-  },
-  kpiCard: {
-    width: '47%',
-    flexGrow: 1,
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderSubtle,
-    borderRadius: radius.lg,
-    padding: space[4],
-  },
-  kpiLabel: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textSecondary,
-    marginTop: space[2],
-  },
-  kpiValue: {
-    fontSize: 28,
-    fontFamily: 'Urbanist_700Bold',
-    color: theme.textPrimary,
-    marginTop: space[1],
-  },
-  kpiBadge: {
-    alignSelf: 'flex-start',
-    height: 20,
-    paddingHorizontal: space[2],
-    borderRadius: radius.full,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: space[2],
-  },
-  kpiBadgeText: {
-    fontSize: 12,
-    fontFamily: 'Urbanist_600SemiBold',
-  },
-  groupList: {
-    gap: space[5],
-    marginTop: space[6],
-    paddingHorizontal: space[6],
-  },
-  groupLabel: {
-    fontSize: 13,
-    fontFamily: 'Urbanist_600SemiBold',
-    letterSpacing: 0.26,
-    color: theme.textSecondary,
-    marginBottom: space[2],
-  },
-  groupCard: {
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderSubtle,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-  },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[3],
-    paddingHorizontal: space[4],
-    paddingVertical: space[3],
-    minHeight: 44,
-  },
-  rowDivider: {
-    borderBottomWidth: 1,
-    borderBottomColor: theme.borderSubtle,
-  },
-  rowIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  rowText: {
-    flex: 1,
-  },
-  rowTitle: {
-    fontSize: 15,
-    fontFamily: 'Urbanist_600SemiBold',
-    color: theme.textPrimary,
-  },
-  rowSubtitle: {
-    fontSize: 12,
-    fontFamily: 'Urbanist_500Medium',
-    color: theme.textSecondary,
-    marginTop: 2,
-  },
-});

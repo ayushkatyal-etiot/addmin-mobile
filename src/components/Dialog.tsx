@@ -24,6 +24,7 @@ export interface DialogProps {
   description?: string;
   buttons: DialogButton[];
   onDismiss?: () => void;
+  disabled?: boolean;
 }
 
 export default function Dialog({
@@ -32,6 +33,7 @@ export default function Dialog({
   description,
   buttons,
   onDismiss,
+  disabled = false,
 }: DialogProps) {
   const [scaleAnim] = useState(new Animated.Value(0.9));
   const [opacityAnim] = useState(new Animated.Value(0));
@@ -133,9 +135,11 @@ export default function Dialog({
                       styles.button,
                       {
                         backgroundColor: buttonStyle.backgroundColor,
+                        opacity: disabled ? 0.6 : 1,
                       },
                     ]}
                     onPress={() => handleButtonPress(button)}
+                    disabled={disabled}
                   >
                     <Text
                       style={[

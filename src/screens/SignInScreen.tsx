@@ -3,7 +3,6 @@ import {
   Image,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   TextInput,
   View,
@@ -15,15 +14,15 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { radius, space, theme, type } from '../theme/tokens';
 import { budgetingIllustrationXml } from '../assets/illustrations/budgeting';
-import type { RootStackParamList } from '../../App';
+import type { RootStackParamList } from '../navigation/RootNavigator';
 import { useLogin } from '../api/auth';
 import { useAuth } from '../contexts/AuthContext';
 import { useLoginForm } from '../hooks/useLoginForm';
 import { useGetUserInfo } from '../api/user';
 import { useUser } from '../contexts/UserContext';
-import Toast from '../components/Toast';
+import { styles } from './SignInScreen.styles';
+import { theme, space } from '../theme/tokens';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SignIn'>;
 
@@ -31,13 +30,11 @@ export default function SignInScreen({ navigation }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
-  const [toastVisible, setToastVisible] = useState(false);
-  const [toastMessage, setToastMessage] = useState('');
 
   const form = useLoginForm();
   const { mutate: login, isPending } = useLogin();
   const { login: saveToken } = useAuth();
-  const { mutate: getUserInfo } = useGetUserInfo();
+  const { mutateAsync: getUserInfoAsync } = useGetUserInfo();
   const { setUser, clearUser } = useUser();
 
   const handleSignIn = async () => {
@@ -53,30 +50,31 @@ export default function SignInScreen({ navigation }: Props) {
       {
         onSuccess: async (response) => {
           try {
-            await saveToken(response.access_token);
-            // Fetch user info
-            getUserInfo(undefined, {
-              onSuccess: async (user) => {
-                try {
-                  await setUser(user);
-                  // Auth state change and user data saved - Dashboard will auto-show
-                } catch (error) {
-                  console.error('Failed to save user info:', error);
-                  form.setFormError('Failed to load user information');
-                }
-              },
-              onError: async (error: any) => {
-                // Clear token and user on fetch failure
-                await clearUser();
-                const message = error?.data?.message || error?.message || 'Failed to load user information';
-                form.setFormError(message);
-              },
-            });
+            console.log('[SignIn] Login successful, saving tokens...');
+            await saveToken(response.access_token, response.refresh_token);
+            console.log('[SignIn] Tokens saved, fetching user info...');
+            // Fetch user info - use mutateAsync to handle promise-based flow
+            try {
+              console.log('[SignIn] Calling getUserInfo mutation...');
+              const user = await getUserInfoAsync();
+              console.log('[SignIn] User info fetched:', user);
+              await setUser(user);
+              console.log('[SignIn] User data saved successfully');
+              // Auth state change and user data saved - Dashboard will auto-show
+            } catch (error: any) {
+              console.error('[SignIn] Failed to fetch user info:', error);
+              // Clear token and user on fetch failure
+              await clearUser();
+              const message = error?.data?.message || error?.message || 'Failed to load user information';
+              form.setFormError(message);
+            }
           } catch (error) {
+            console.error('[SignIn] Token save error:', error);
             form.setFormError('Failed to save authentication token');
           }
         },
         onError: (error: any) => {
+          console.error('[SignIn] Login failed:', error);
           const message = error?.data?.message || error?.message || 'Incorrect email or password';
           form.setFormError(message);
         },
@@ -239,168 +237,6 @@ export default function SignInScreen({ navigation }: Props) {
         </View>
       </KeyboardAwareScrollView>
 
-      <Toast visible={toastVisible} message={toastMessage} type="error" onHide={() => setToastVisible(false)} />
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-    backgroundColor: theme.bgPage,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: space[6],
-    paddingBottom: space[6],
-  },
-  logo: {
-    width: 150,
-    height: 84,
-    alignSelf: 'center',
-  },
-  illustration: {
-    marginTop: space[5],
-    alignItems: 'center',
-  },
-  heading: {
-    marginTop: space[6],
-  },
-  title: {
-    ...type.h2,
-    color: theme.textPrimary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    ...type.small,
-    color: theme.textSecondary,
-    textAlign: 'center',
-    marginTop: space[1],
-  },
-  errorBanner: {
-    marginTop: space[4],
-    padding: space[3],
-    backgroundColor: theme.statusDangerBg,
-    borderRadius: radius.md,
-  },
-  errorBannerText: {
-    ...type.small,
-    fontFamily: type.label.fontFamily,
-    color: theme.statusDangerStrong,
-  },
-  form: {
-    marginTop: space[6],
-    gap: space[4],
-  },
-  field: {
-    gap: space[1],
-  },
-  label: {
-    ...type.label,
-    letterSpacing: 0,
-    color: theme.textPrimary,
-  },
-  inputWrap: {
-    position: 'relative',
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 48,
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-  },
-  inputWrapFocused: {
-    borderColor: theme.brandDefault,
-  },
-  inputWrapError: {
-    borderColor: theme.statusDanger,
-  },
-  inputIcon: {
-    position: 'absolute',
-    left: 12,
-    zIndex: 1,
-  },
-  input: {
-    flex: 1,
-    minHeight: 48,
-    paddingLeft: 40,
-    paddingRight: 12,
-    fontSize: 16,
-    fontFamily: type.body.fontFamily,
-    color: theme.textPrimary,
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
-  },
-  inputWithTrailingIcon: {
-    paddingRight: 44,
-  },
-  trailingIconButton: {
-    position: 'absolute',
-    right: 2,
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  forgotPassword: {
-    alignSelf: 'flex-end',
-    minHeight: 32,
-    justifyContent: 'center',
-  },
-  forgotPasswordText: {
-    ...type.label,
-    letterSpacing: 0,
-    color: theme.brandDefault,
-  },
-  errorText: {
-    ...type.caption,
-    color: theme.statusDanger,
-  },
-  signInButton: {
-    marginTop: space[5],
-    minHeight: 48,
-    backgroundColor: theme.brandDefault,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  signInButtonDisabled: {
-    backgroundColor: theme.bgSunken,
-    borderWidth: 1,
-    borderColor: theme.borderSubtle,
-  },
-  signInButtonText: {
-    ...type.body,
-    fontFamily: type.h3.fontFamily,
-    fontSize: 15,
-    color: theme.textOnBrand,
-  },
-  loadingContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: space[2],
-  },
-  loadingText: {
-    ...type.body,
-    fontFamily: type.h3.fontFamily,
-    fontSize: 15,
-    color: theme.textDisabled,
-  },
-  footer: {
-    flex: 1,
-    marginTop: space[6],
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    gap: space[1] + 2,
-  },
-  footerText: {
-    ...type.small,
-    color: theme.textSecondary,
-  },
-  footerLink: {
-    ...type.label,
-    letterSpacing: 0,
-    color: theme.brandDefault,
-  },
-});
