@@ -18,3 +18,6 @@ icon = "smartphone"
 available_in = [ "local" ]
 command = "npx expo run:android -d"
 icon = "tablet-smartphone"
+
+[git]
+default_pr_target = "dev/ayush"

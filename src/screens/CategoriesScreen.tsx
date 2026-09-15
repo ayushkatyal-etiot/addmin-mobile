@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
+  ActivityIndicator,
   FlatList,
   Modal,
   Pressable,
@@ -24,68 +26,20 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { radius, space, theme } from '../theme/tokens';
+import { useGetCategories, useDeleteCategory } from '../api/categories';
+import type { Category } from '../types/category';
+import Toast from '../components/Toast';
+import { styles } from './CategoriesScreen.styles';
+import { theme, space } from '../theme/tokens';
 
-type Category = {
-  id: string;
-  code: string;
-  name: string;
-  description: string;
-  fullDescription: string;
-  active: boolean;
-  parent: string | null;
-  createdAt: string;
-  updatedAt: string;
-  inUseCount: number;
-};
-
-const CATEGORIES: Category[] = [
-  {
-    id: 'cat-1', code: 'CAT-001', name: 'Utility',
-    description: 'Electricity, water, gas and other utility bills',
-    fullDescription: 'All recurring and one-time utility connections billed per office, including electricity, water, gas, internet and telephone.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '10/03/2026', inUseCount: 24,
-  },
-  {
-    id: 'cat-2', code: 'CAT-002', name: 'Rent & Lease',
-    description: 'Office and warehouse rent, lease renewals',
-    fullDescription: 'Covers rent, common area maintenance charges and lease renewal costs across all office and warehouse properties held under the tenant.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '14/06/2026', inUseCount: 0,
-  },
-  {
-    id: 'cat-3', code: 'CAT-003', name: 'Maintenance',
-    description: 'Repairs, AMC contracts and upkeep',
-    fullDescription: 'Repair work orders, annual maintenance contracts and general upkeep across offices and warehouses.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '12/02/2026', inUseCount: 0,
-  },
-  {
-    id: 'cat-4', code: 'CAT-004', name: 'Office Supplies',
-    description: 'Stationery, pantry and consumables',
-    fullDescription: 'Day-to-day stationery, pantry supplies and general office consumables purchased for daily operations.',
-    active: true, parent: null, createdAt: '02/01/2024', updatedAt: '05/01/2026', inUseCount: 0,
-  },
-  {
-    id: 'cat-5', code: 'CAT-005', name: 'Electricity',
-    description: 'Electricity connection bills across all offices',
-    fullDescription: 'Electricity connection bills across all offices',
-    active: true, parent: 'Utility', createdAt: '02/01/2024', updatedAt: '10/03/2026', inUseCount: 0,
-  },
-  {
-    id: 'cat-11', code: 'CAT-011', name: 'Pantry & Refreshments',
-    description: 'Tea, coffee and snacks for the office pantry',
-    fullDescription: 'Merged into Office Supplies in 2026; retained for historical expenses only.',
-    active: false, parent: 'Office Supplies', createdAt: '18/09/2023', updatedAt: '02/02/2026', inUseCount: 0,
-  },
-];
-
-type SortKey = 'nameAsc' | 'nameDesc' | 'recentlyCreated' | 'recentlyUpdated' | 'idAsc';
+type SortKey = 'nameAsc' | 'nameDesc' | 'recentlyCreated' | 'recentlyUpdated' | 'codeAsc';
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'nameAsc', label: 'Name — A to Z' },
   { key: 'nameDesc', label: 'Name — Z to A' },
   { key: 'recentlyCreated', label: 'Recently created' },
   { key: 'recentlyUpdated', label: 'Recently updated' },
-  { key: 'idAsc', label: 'Category ID — ascending' },
+  { key: 'codeAsc', label: 'Category code — ascending' },
 ];
 
 function sortCategories(list: Category[], sortKey: SortKey): Category[] {
@@ -95,8 +49,12 @@ function sortCategories(list: Category[], sortKey: SortKey): Category[] {
       return sorted.sort((a, b) => a.name.localeCompare(b.name));
     case 'nameDesc':
       return sorted.sort((a, b) => b.name.localeCompare(a.name));
-    case 'idAsc':
-      return sorted.sort((a, b) => a.code.localeCompare(b.code));
+    case 'codeAsc':
+      return sorted.sort((a, b) => a.category_code.localeCompare(b.category_code));
+    case 'recentlyCreated':
+      return sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    case 'recentlyUpdated':
+      return sorted.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
     default:
       return sorted;
   }
@@ -107,7 +65,7 @@ export default function CategoriesScreen({
   onAddCategory,
 }: {
   onBack: () => void;
-  onAddCategory: () => void;
+  onAddCategory: (categoryId?: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -115,23 +73,83 @@ export default function CategoriesScreen({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('nameAsc');
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
-  const [categories, setCategories] = useState(CATEGORIES);
+  const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<Category | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('error');
+
+  const { data, isLoading, refetch, error } = useGetCategories();
+  const { mutateAsync: deleteCategory, isPending: isDeleting } = useDeleteCategory();
+
+  console.log('[CategoriesScreen] Query state:', { isLoading, data: data?.items?.length ?? 0, error: error?.message });
+
+  // Refetch categories when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[CategoriesScreen] Screen focused, refetching...');
+      refetch();
+    }, [refetch])
+  );
+
+  const allCategories = useMemo(() => {
+    const items = data?.items ?? [];
+    console.log('[CategoriesScreen] All categories:', items.length);
+    return items;
+  }, [data]);
+
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    allCategories.forEach((cat) => {
+      map.set(cat.id, cat.name);
+    });
+    return map;
+  }, [allCategories]);
 
   const filtered = useMemo(() => {
     const byFilter =
-      filter === 'all' ? categories : categories.filter((c) => (filter === 'active' ? c.active : !c.active));
+      filter === 'all'
+        ? allCategories
+        : allCategories.filter((c) => (filter === 'active' ? c.is_active : !c.is_active));
     const q = query.trim().toLowerCase();
     const byQuery = q
       ? byFilter.filter(
-          (c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q) || c.description.toLowerCase().includes(q)
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            c.category_code.toLowerCase().includes(q) ||
+            c.description.toLowerCase().includes(q)
         )
       : byFilter;
     return sortCategories(byQuery, sortKey);
-  }, [categories, filter, query, sortKey]);
+  }, [allCategories, filter, query, sortKey]);
 
   const isSearching = query.trim().length > 0;
   const isEmpty = filtered.length === 0;
-  const noCategoriesAtAll = categories.length === 0;
+  const isInitialLoading = isLoading;
+
+  const handleDeletePress = (category: Category) => {
+    setCategoryToDelete(category);
+    setDeleteDialogVisible(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!categoryToDelete) return;
+    try {
+      setDeleteDialogVisible(false);
+      await deleteCategory(categoryToDelete.id);
+      setExpandedId(null);
+      setToastType('success');
+      setToastMessage('Category deleted successfully');
+      setToastVisible(true);
+      await refetch();
+    } catch (err: any) {
+      console.log('[CategoriesScreen] Delete error:', err);
+      const message = err?.data?.detail || err?.data?.message || err?.message || 'Failed to delete category';
+      setToastType('error');
+      setToastMessage(message);
+      setToastVisible(true);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.flex} edges={['top', 'bottom', 'left', 'right']}>
@@ -142,26 +160,31 @@ export default function CategoriesScreen({
         <Text style={styles.headerTitle}>Categories</Text>
       </View>
 
-      {!noCategoriesAtAll ? (
+      {allCategories.length > 0 ? (
         <>
-          <View style={styles.searchRow}>
-            <View style={[styles.searchBar, isSearching && styles.searchBarActive]}>
-              <Search size={18} color={theme.textTertiary} strokeWidth={1.75} />
+          <View style={[styles.searchRow, isInitialLoading && styles.searchRowDisabled]}>
+            <View style={[styles.searchBar, isSearching && styles.searchBarActive, isInitialLoading && styles.searchBarDisabled]}>
+              <Search size={18} color={isInitialLoading ? theme.textTertiary : theme.textTertiary} strokeWidth={1.75} />
               <TextInput
                 style={styles.searchInput}
                 value={query}
                 onChangeText={setQuery}
                 placeholder="Search categories"
                 placeholderTextColor={theme.textTertiary}
+                editable={!isInitialLoading}
               />
-              {isSearching ? (
+              {isSearching && !isInitialLoading ? (
                 <Pressable onPress={() => setQuery('')} hitSlop={8}>
                   <X size={16} color={theme.textTertiary} strokeWidth={2} />
                 </Pressable>
               ) : null}
             </View>
-            <Pressable style={styles.sortButton} onPress={() => setSortSheetOpen(true)}>
-              <ArrowUpDown size={18} color={theme.textSecondary} strokeWidth={1.75} />
+            <Pressable
+              style={[styles.sortButton, isInitialLoading && styles.sortButtonDisabled]}
+              onPress={() => setSortSheetOpen(true)}
+              disabled={isInitialLoading}
+            >
+              <ArrowUpDown size={18} color={isInitialLoading ? theme.textTertiary : theme.textSecondary} strokeWidth={1.75} />
             </Pressable>
           </View>
 
@@ -170,6 +193,7 @@ export default function CategoriesScreen({
             showsHorizontalScrollIndicator={false}
             style={styles.chipRow}
             contentContainerStyle={styles.chipRowContent}
+            scrollEnabled={!isInitialLoading}
           >
             {(
               [
@@ -182,10 +206,11 @@ export default function CategoriesScreen({
               return (
                 <Pressable
                   key={chip.key}
-                  style={[styles.chip, active && styles.chipActive]}
+                  style={[styles.chip, active && styles.chipActive, isInitialLoading && styles.chipDisabled]}
                   onPress={() => setFilter(chip.key)}
+                  disabled={isInitialLoading}
                 >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{chip.label}</Text>
+                  <Text style={[styles.chipText, active && styles.chipTextActive, isInitialLoading && styles.chipTextDisabled]}>{chip.label}</Text>
                 </Pressable>
               );
             })}
@@ -194,7 +219,11 @@ export default function CategoriesScreen({
       ) : null}
 
       <View style={styles.contentContainer}>
-        {isEmpty ? (
+        {isInitialLoading ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator size="large" color={theme.brandDefault} />
+          </View>
+        ) : isEmpty ? (
           <View style={styles.emptyState}>
             {isSearching ? (
               <>
@@ -219,21 +248,18 @@ export default function CategoriesScreen({
             renderItem={({ item }) => (
               <CategoryCard
                 category={item}
+                parentName={item.parent_id ? categoryMap.get(item.parent_id) : undefined}
                 expanded={expandedId === item.id}
                 onToggle={() => setExpandedId((current) => (current === item.id ? null : item.id))}
-                onToggleActive={() =>
-                  setCategories((current) =>
-                    current.map((c) => (c.id === item.id ? { ...c, active: !c.active } : c))
-                  )
-                }
-                onDelete={() => setCategories((current) => current.filter((c) => c.id !== item.id))}
+                onEdit={() => onAddCategory(item.id)}
+                onDelete={() => handleDeletePress(item)}
               />
             )}
           />
         )}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={onAddCategory}>
+      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={() => onAddCategory()}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
@@ -246,29 +272,72 @@ export default function CategoriesScreen({
         }}
         onClose={() => setSortSheetOpen(false)}
       />
+
+      <Modal visible={deleteDialogVisible} transparent animationType="fade" onRequestClose={() => setDeleteDialogVisible(false)}>
+        <Pressable style={styles.dialogOverlay} onPress={() => setDeleteDialogVisible(false)}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>Delete category?</Text>
+            <Text style={styles.dialogMessage}>This action cannot be undone.</Text>
+            <View style={styles.dialogButtonRow}>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonCancel]}
+                onPress={() => setDeleteDialogVisible(false)}
+                disabled={isDeleting}
+              >
+                <Text style={styles.dialogButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonDelete]}
+                onPress={handleDeleteConfirm}
+                disabled={isDeleting}
+              >
+                <Text style={[styles.dialogButtonText, styles.dialogButtonDeleteText]}>
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Toast
+        visible={toastVisible}
+        message={toastMessage}
+        type={toastType}
+        onHide={() => setToastVisible(false)}
+      />
     </SafeAreaView>
   );
 }
 
 function CategoryCard({
-  category, expanded, onToggle, onToggleActive, onDelete,
+  category,
+  parentName,
+  expanded,
+  onToggle,
+  onEdit,
+  onDelete,
 }: {
   category: Category;
+  parentName?: string;
   expanded: boolean;
   onToggle: () => void;
-  onToggleActive: () => void;
+  onEdit: () => void;
   onDelete: () => void;
 }) {
-  const canDelete = category.inUseCount === 0;
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  };
 
   return (
     <View style={styles.card}>
       <Pressable onPress={onToggle}>
-        {category.parent ? <Text style={styles.breadcrumb}>{category.parent} ›</Text> : null}
+        {parentName ? <Text style={styles.breadcrumb}>{parentName} ›</Text> : null}
         <View style={styles.cardTopRow}>
           <View style={styles.cardTitleRow}>
             <Text style={styles.cardTitle} numberOfLines={1}>{category.name}</Text>
-            <Text style={styles.cardCode}>{category.code}</Text>
+            <Text style={styles.cardCode}>{category.category_code}</Text>
           </View>
           <ChevronDown
             size={18}
@@ -281,9 +350,9 @@ function CategoryCard({
           {category.description}
         </Text>
         <View style={styles.statusRow}>
-          <View style={[styles.statusBadge, category.active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
-            <Text style={[styles.statusBadgeText, { color: category.active ? theme.statusSuccessStrong : theme.statusDangerStrong }]}>
-              {category.active ? 'Active' : 'Inactive'}
+          <View style={[styles.statusBadge, category.is_active ? styles.statusBadgeActive : styles.statusBadgeInactive]}>
+            <Text style={[styles.statusBadgeText, { color: category.is_active ? theme.statusSuccessStrong : theme.statusDangerStrong }]}>
+              {category.is_active ? 'Active' : 'Inactive'}
             </Text>
           </View>
         </View>
@@ -292,42 +361,29 @@ function CategoryCard({
       {expanded ? (
         <View style={styles.details}>
           <View>
-            <Text style={styles.detailLabel}>Full description</Text>
-            <Text style={styles.detailFullDescription}>{category.fullDescription}</Text>
-          </View>
-          <View style={styles.detailSpacingTop}>
-            <Text style={styles.detailLabel}>Parent category</Text>
-            <Text style={styles.detailValue}>{category.parent ?? '—'}</Text>
+            <Text style={styles.detailLabel}>Full code</Text>
+            <Text style={styles.detailValue}>{category.full_code}</Text>
           </View>
           <View style={[styles.detailGrid, styles.detailSpacingTop]}>
             <View style={styles.detailField}>
               <Text style={styles.detailLabel}>Created at</Text>
-              <Text style={styles.detailValue}>{category.createdAt}</Text>
+              <Text style={styles.detailValue}>{formatDate(category.created_at)}</Text>
             </View>
             <View style={styles.detailField}>
               <Text style={styles.detailLabel}>Updated at</Text>
-              <Text style={styles.detailValue}>{category.updatedAt}</Text>
+              <Text style={styles.detailValue}>{formatDate(category.updated_at)}</Text>
             </View>
           </View>
           <View style={styles.actionRow}>
-            <Pressable style={styles.actionButton}>
+            <Pressable style={styles.actionButton} onPress={onEdit}>
               <Pencil size={14} color={theme.textPrimary} strokeWidth={1.75} />
               <Text style={styles.actionButtonText}>Edit</Text>
             </Pressable>
-            <Pressable style={styles.actionButton} onPress={onToggleActive}>
-              <Power size={14} color={theme.textPrimary} strokeWidth={1.75} />
-              <Text style={styles.actionButtonText}>{category.active ? 'Deactivate' : 'Activate'}</Text>
+            <Pressable style={styles.actionButton} onPress={onDelete}>
+              <Trash2 size={14} color={theme.statusDanger} strokeWidth={1.75} />
+              <Text style={[styles.actionButtonText, styles.actionButtonDangerText]}>Delete</Text>
             </Pressable>
-            {canDelete ? (
-              <Pressable style={styles.actionButton} onPress={onDelete}>
-                <Trash2 size={14} color={theme.statusDanger} strokeWidth={1.75} />
-                <Text style={[styles.actionButtonText, { color: theme.statusDanger }]}>Delete</Text>
-              </Pressable>
-            ) : null}
           </View>
-          {!canDelete ? (
-            <Text style={styles.inUseText}>In use by {category.inUseCount} expenses — deactivate instead.</Text>
-          ) : null}
         </View>
       ) : null}
     </View>
@@ -374,89 +430,3 @@ function SortSheet({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: theme.bgPage },
-  header: { flexDirection: 'row', alignItems: 'center', gap: space[2], paddingHorizontal: space[6] - 10 },
-  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-
-  searchRow: { flexDirection: 'row', gap: space[2], marginTop: space[3], paddingHorizontal: space[6] },
-  searchBar: {
-    flex: 1, height: 44, paddingHorizontal: space[3], backgroundColor: theme.bgRaised,
-    borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md,
-    flexDirection: 'row', alignItems: 'center', gap: space[2],
-  },
-  searchBarActive: { borderColor: theme.brandDefault },
-  searchInput: { flex: 1, fontSize: 15, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, padding: 0 },
-  sortButton: {
-    width: 44, height: 44, backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault,
-    borderRadius: radius.md, alignItems: 'center', justifyContent: 'center',
-  },
-
-  chipRow: { marginTop: space[3], marginBottom: space[3], flexGrow: 0 },
-  chipRowContent: { gap: space[2], paddingHorizontal: space[6] },
-  chip: {
-    height: 28, paddingHorizontal: space[3], borderRadius: radius.full, borderWidth: 1,
-    borderColor: theme.borderDefault, backgroundColor: theme.bgRaised, alignItems: 'center', justifyContent: 'center',
-  },
-  chipActive: { borderColor: theme.brandDefault, backgroundColor: theme.brandSubtle },
-  chipText: { fontSize: 13, fontFamily: 'Urbanist_500Medium', color: theme.textPrimary },
-  chipTextActive: { fontFamily: 'Urbanist_600SemiBold', color: theme.brandActive },
-
-  contentContainer: { flex: 1 },
-  listContent: { paddingHorizontal: space[6], paddingTop: space[4], paddingBottom: 112 },
-
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space[6], gap: space[2] },
-  emptyTitle: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, marginTop: space[2], textAlign: 'center' },
-  emptyTitleLg: { fontSize: 15 },
-  emptySubtitle: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, textAlign: 'center' },
-
-  card: { backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderSubtle, borderRadius: radius.lg, padding: space[4] },
-  breadcrumb: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginBottom: 2 },
-  cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[3] },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'baseline', gap: space[2], flex: 1, minWidth: 0 },
-  cardTitle: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, flexShrink: 1 },
-  cardCode: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, fontVariant: ['tabular-nums'] },
-  chevronUp: { transform: [{ rotate: '180deg' }] },
-  cardDescription: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[1] },
-  statusRow: { marginTop: space[2] },
-  statusBadge: { height: 20, paddingHorizontal: space[2], borderRadius: radius.full, alignSelf: 'flex-start', alignItems: 'center', justifyContent: 'center' },
-  statusBadgeActive: { backgroundColor: theme.statusSuccessBg },
-  statusBadgeInactive: { backgroundColor: theme.statusDangerBg },
-  statusBadgeText: { fontSize: 12, fontFamily: 'Urbanist_600SemiBold' },
-
-  details: { borderTopWidth: 1, borderTopColor: theme.borderSubtle, marginTop: space[3], paddingTop: space[3] },
-  detailSpacingTop: { marginTop: space[3] },
-  detailLabel: { fontSize: 12, fontFamily: 'Urbanist_500Medium', color: theme.textTertiary },
-  detailValue: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, marginTop: 2 },
-  detailFullDescription: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, marginTop: 2, lineHeight: 18 },
-  detailGrid: { flexDirection: 'row', gap: space[3] },
-  detailField: { flex: 1 },
-
-  actionRow: { flexDirection: 'row', gap: space[2], marginTop: space[4] },
-  actionButton: {
-    height: 32, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
-    borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: space[1] + 2,
-  },
-  actionButtonText: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  inUseText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, marginTop: space[2] },
-
-  fab: {
-    position: 'absolute', right: space[5], width: 56, height: 56, borderRadius: radius.xl,
-    backgroundColor: theme.brandDefault, alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#080a0b', shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 4,
-  },
-
-  sheetRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.bgOverlay },
-  sheet: { backgroundColor: theme.bgRaised, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl },
-  sheetHandleRow: { alignItems: 'center', paddingTop: space[3] },
-  sheetHandle: { width: 36, height: 4, borderRadius: radius.full, backgroundColor: theme.borderStrong },
-  sheetTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space[5], paddingTop: space[4] },
-  sheetTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  sheetCloseButton: { width: 36, height: 36, borderRadius: radius.full, backgroundColor: theme.bgSunken, alignItems: 'center', justifyContent: 'center' },
-  sortRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space[3] + 2, minHeight: 44 },
-  sortRowDivider: { borderBottomWidth: 1, borderBottomColor: theme.borderSubtle },
-  sortRowText: { fontSize: 15, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary },
-  sortRowTextActive: { fontFamily: 'Urbanist_600SemiBold' },
-});

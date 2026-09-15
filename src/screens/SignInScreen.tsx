@@ -3,10 +3,10 @@ import {
   Image,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   TextInput,
   View,
+  ActivityIndicator,
 } from 'react-native';
 import { Eye, EyeOff, Lock, Mail } from 'lucide-react-native';
 import { SvgXml } from 'react-native-svg';
@@ -14,18 +14,73 @@ import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import { radius, space, theme, type } from '../theme/tokens';
 import { budgetingIllustrationXml } from '../assets/illustrations/budgeting';
-import type { RootStackParamList } from '../../App';
+import type { RootStackParamList } from '../navigation/RootNavigator';
+import { useLogin } from '../api/auth';
+import { useAuth } from '../contexts/AuthContext';
+import { useLoginForm } from '../hooks/useLoginForm';
+import { useGetUserInfo } from '../api/user';
+import { useUser } from '../contexts/UserContext';
+import { styles } from './SignInScreen.styles';
+import { theme, space } from '../theme/tokens';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'SignIn'>;
 
 export default function SignInScreen({ navigation }: Props) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+
+  const form = useLoginForm();
+  const { mutate: login, isPending } = useLogin();
+  const { login: saveToken } = useAuth();
+  const { mutateAsync: getUserInfoAsync } = useGetUserInfo();
+  const { setUser, clearUser } = useUser();
+
+  const handleSignIn = async () => {
+    form.setEmailTouched(true);
+    form.setPasswordTouched(true);
+
+    if (!form.canSubmit()) {
+      return;
+    }
+
+    login(
+      { email: form.email, password: form.password },
+      {
+        onSuccess: async (response) => {
+          try {
+            console.log('[SignIn] Login successful, saving tokens...');
+            await saveToken(response.access_token, response.refresh_token);
+            console.log('[SignIn] Tokens saved, fetching user info...');
+            // Fetch user info - use mutateAsync to handle promise-based flow
+            try {
+              console.log('[SignIn] Calling getUserInfo mutation...');
+              const user = await getUserInfoAsync();
+              console.log('[SignIn] User info fetched:', user);
+              await setUser(user);
+              console.log('[SignIn] User data saved successfully');
+              // Auth state change and user data saved - Dashboard will auto-show
+            } catch (error: any) {
+              console.error('[SignIn] Failed to fetch user info:', error);
+              // Clear token and user on fetch failure
+              await clearUser();
+              const message = error?.data?.message || error?.message || 'Failed to load user information';
+              form.setFormError(message);
+            }
+          } catch (error) {
+            console.error('[SignIn] Token save error:', error);
+            form.setFormError('Failed to save authentication token');
+          }
+        },
+        onError: (error: any) => {
+          console.error('[SignIn] Login failed:', error);
+          const message = error?.data?.message || error?.message || 'Incorrect email or password';
+          form.setFormError(message);
+        },
+      }
+    );
+  };
 
   return (
     <SafeAreaView style={styles.flex} edges={['top', 'bottom', 'left', 'right']}>
@@ -50,31 +105,54 @@ export default function SignInScreen({ navigation }: Props) {
           <Text style={styles.subtitle}>Use the email your admin invited you with</Text>
         </View>
 
+        {form.formError && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorBannerText}>{form.formError}</Text>
+          </View>
+        )}
+
         <View style={styles.form}>
           <View style={styles.field}>
             <Text style={styles.label}>Work email</Text>
             <View
               style={[
                 styles.inputWrap,
-                emailFocused && styles.inputWrapFocused,
+                form.emailError && styles.inputWrapError,
+                !form.emailError && emailFocused && styles.inputWrapFocused,
               ]}
             >
               <View style={styles.inputIcon} pointerEvents="none">
-                <Mail size={18} color={emailFocused ? theme.brandDefault : theme.textTertiary} />
+                <Mail
+                  size={18}
+                  color={
+                    form.emailError
+                      ? theme.statusDanger
+                      : emailFocused
+                        ? theme.brandDefault
+                        : theme.textTertiary
+                  }
+                />
               </View>
               <TextInput
-                value={email}
-                onChangeText={setEmail}
+                value={form.email}
+                onChangeText={form.setEmail}
                 onFocus={() => setEmailFocused(true)}
-                onBlur={() => setEmailFocused(false)}
+                onBlur={() => {
+                  setEmailFocused(false);
+                  form.setEmailTouched(true);
+                }}
                 placeholder="name@company.com"
                 placeholderTextColor={theme.textTertiary}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 autoComplete="email"
+                editable={!isPending}
                 style={styles.input}
               />
             </View>
+            {form.emailTouched && form.emailError && (
+              <Text style={styles.errorText}>{form.emailError}</Text>
+            )}
           </View>
 
           <View style={styles.field}>
@@ -82,28 +160,43 @@ export default function SignInScreen({ navigation }: Props) {
             <View
               style={[
                 styles.inputWrap,
-                passwordFocused && styles.inputWrapFocused,
+                form.passwordError && styles.inputWrapError,
+                !form.passwordError && passwordFocused && styles.inputWrapFocused,
               ]}
             >
               <View style={styles.inputIcon} pointerEvents="none">
-                <Lock size={18} color={theme.textTertiary} />
+                <Lock
+                  size={18}
+                  color={
+                    form.passwordError
+                      ? theme.statusDanger
+                      : passwordFocused
+                        ? theme.brandDefault
+                        : theme.textTertiary
+                  }
+                />
               </View>
               <TextInput
-                value={password}
-                onChangeText={setPassword}
+                value={form.password}
+                onChangeText={form.setPassword}
                 onFocus={() => setPasswordFocused(true)}
-                onBlur={() => setPasswordFocused(false)}
+                onBlur={() => {
+                  setPasswordFocused(false);
+                  form.setPasswordTouched(true);
+                }}
                 placeholder="••••••••"
                 placeholderTextColor={theme.textTertiary}
                 secureTextEntry={!showPassword}
                 autoComplete="current-password"
+                editable={!isPending}
                 style={[styles.input, styles.inputWithTrailingIcon]}
               />
               <Pressable
                 accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                onPress={() => setShowPassword((v) => !v)}
+                onPress={() => setShowPassword((v: boolean) => !v)}
                 style={styles.trailingIconButton}
                 hitSlop={8}
+                disabled={isPending}
               >
                 {showPassword ? (
                   <EyeOff size={18} color={theme.textTertiary} />
@@ -112,14 +205,28 @@ export default function SignInScreen({ navigation }: Props) {
                 )}
               </Pressable>
             </View>
-            <Pressable style={styles.forgotPassword} hitSlop={8}>
+            {form.passwordTouched && form.passwordError && (
+              <Text style={styles.errorText}>{form.passwordError}</Text>
+            )}
+            <Pressable style={styles.forgotPassword} hitSlop={8} disabled={isPending}>
               <Text style={styles.forgotPasswordText}>Forgot password?</Text>
             </Pressable>
           </View>
         </View>
 
-        <Pressable style={styles.signInButton} onPress={() => navigation.navigate('Dashboard')}>
-          <Text style={styles.signInButtonText}>Sign in</Text>
+        <Pressable
+          style={[styles.signInButton, isPending && styles.signInButtonDisabled]}
+          onPress={handleSignIn}
+          disabled={isPending}
+        >
+          {isPending ? (
+            <View style={styles.loadingContent}>
+              <ActivityIndicator color={theme.textDisabled} size="small" />
+              <Text style={styles.loadingText}>Signing in…</Text>
+            </View>
+          ) : (
+            <Text style={styles.signInButtonText}>Sign in</Text>
+          )}
         </Pressable>
 
         <View style={styles.footer}>
@@ -129,133 +236,7 @@ export default function SignInScreen({ navigation }: Props) {
           </Pressable>
         </View>
       </KeyboardAwareScrollView>
+
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-    backgroundColor: theme.bgPage,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: space[6],
-    paddingBottom: space[6],
-  },
-  logo: {
-    width: 150,
-    height: 84,
-    alignSelf: 'center',
-  },
-  illustration: {
-    marginTop: space[5],
-    alignItems: 'center',
-  },
-  heading: {
-    marginTop: space[6],
-  },
-  title: {
-    ...type.h2,
-    color: theme.textPrimary,
-    textAlign: 'center',
-  },
-  subtitle: {
-    ...type.small,
-    color: theme.textSecondary,
-    textAlign: 'center',
-    marginTop: space[1],
-  },
-  form: {
-    marginTop: space[6],
-    gap: space[4],
-  },
-  field: {
-    gap: space[1],
-  },
-  label: {
-    ...type.label,
-    letterSpacing: 0,
-    color: theme.textPrimary,
-  },
-  inputWrap: {
-    position: 'relative',
-    flexDirection: 'row',
-    alignItems: 'center',
-    minHeight: 48,
-    backgroundColor: theme.bgRaised,
-    borderWidth: 1,
-    borderColor: theme.borderDefault,
-    borderRadius: radius.md,
-  },
-  inputWrapFocused: {
-    borderColor: theme.brandDefault,
-  },
-  inputIcon: {
-    position: 'absolute',
-    left: 12,
-    zIndex: 1,
-  },
-  input: {
-    flex: 1,
-    minHeight: 48,
-    paddingLeft: 40,
-    paddingRight: 12,
-    fontSize: 16,
-    fontFamily: type.body.fontFamily,
-    color: theme.textPrimary,
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
-  },
-  inputWithTrailingIcon: {
-    paddingRight: 44,
-  },
-  trailingIconButton: {
-    position: 'absolute',
-    right: 2,
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  forgotPassword: {
-    alignSelf: 'flex-end',
-    minHeight: 32,
-    justifyContent: 'center',
-  },
-  forgotPasswordText: {
-    ...type.label,
-    letterSpacing: 0,
-    color: theme.brandDefault,
-  },
-  signInButton: {
-    marginTop: space[5],
-    minHeight: 48,
-    backgroundColor: theme.brandDefault,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  signInButtonText: {
-    ...type.body,
-    fontFamily: type.h3.fontFamily,
-    fontSize: 15,
-    color: theme.textOnBrand,
-  },
-  footer: {
-    flex: 1,
-    marginTop: space[6],
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'flex-end',
-    gap: space[1] + 2,
-  },
-  footerText: {
-    ...type.small,
-    color: theme.textSecondary,
-  },
-  footerLink: {
-    ...type.label,
-    letterSpacing: 0,
-    color: theme.brandDefault,
-  },
-});

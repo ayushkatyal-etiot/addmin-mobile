@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   Linking,
@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import {
@@ -29,48 +30,11 @@ import {
   X,
 } from 'lucide-react-native';
 
-import { radius, space, theme } from '../theme/tokens';
-
-type Vendor = {
-  id: string;
-  code: string;
-  name: string;
-  city: string;
-  active: boolean;
-  email: string;
-  phone: string;
-  gstNumber: string | null;
-  createdAt: string;
-  inUseCount: number;
-};
-
-const VENDORS: Vendor[] = [
-  {
-    id: 'vnd-1', code: 'VND-001', name: 'Sharma Facility Services', city: 'Mumbai', active: true,
-    email: 'contact@sharmafacility.in', phone: '+91 98200 12345', gstNumber: '27AABCS1429B1ZQ',
-    createdAt: '02/08/2022', inUseCount: 12,
-  },
-  {
-    id: 'vnd-2', code: 'VND-002', name: 'Blue Star Ltd', city: 'Pune', active: true,
-    email: 'accounts.payable@bluestarindia.com', phone: '+91 22 4567 8901', gstNumber: '27AABCB1234C1ZP',
-    createdAt: '14/03/2024', inUseCount: 0,
-  },
-  {
-    id: 'vnd-3', code: 'VND-003', name: 'Godrej Interio', city: 'Mumbai', active: true,
-    email: 'vendor.support@godrejinterio.com', phone: '+91 22 6796 5500', gstNumber: '27AAACG0057B1Z2',
-    createdAt: '11/05/2023', inUseCount: 0,
-  },
-  {
-    id: 'vnd-4', code: 'VND-004', name: 'Quess Corp', city: 'Bengaluru', active: true,
-    email: 'vendor.ops@quesscorp.com', phone: '+91 80 4567 1234', gstNumber: null,
-    createdAt: '19/11/2023', inUseCount: 0,
-  },
-  {
-    id: 'vnd-5', code: 'VND-005', name: 'Nilkamal Ltd', city: 'Ahmedabad', active: false,
-    email: 'sales@nilkamal.com', phone: '+91 79 2630 4040', gstNumber: '24AAACN1234D1Z5',
-    createdAt: '30/01/2021', inUseCount: 0,
-  },
-];
+import { useGetVendors, useDeleteVendor } from '../api/vendors';
+import type { Vendor } from '../types/vendor';
+import Toast from '../components/Toast';
+import { styles } from './VendorsScreen.styles';
+import { theme, space } from '../theme/tokens';
 
 type SortKey = 'nameAsc' | 'nameDesc' | 'recentlyAdded' | 'recentlyUpdated' | 'cityAsc' | 'idAsc';
 
@@ -104,7 +68,7 @@ export default function VendorsScreen({
   onAddVendor,
 }: {
   onBack: () => void;
-  onAddVendor: () => void;
+  onAddVendor: (vendorId?: string) => void;
 }) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
@@ -112,11 +76,33 @@ export default function VendorsScreen({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>('nameAsc');
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
-  const [vendors, setVendors] = useState(VENDORS);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [localVendors, setLocalVendors] = useState<Vendor[]>([]);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastType, setToastType] = useState<'success' | 'error'>('error');
+
+  const { data: vendorsData, isLoading, refetch } = useGetVendors();
+  const { mutateAsync: deleteVendor, isPending: isDeleting } = useDeleteVendor();
+
+  useFocusEffect(
+    useCallback(() => {
+      console.log('[VendorsScreen] Screen focused, refetching vendors...');
+      refetch().catch((err) => console.error('[VendorsScreen] Refetch failed:', err));
+    }, [refetch])
+  );
+
+  console.log('[VendorsScreen] Render - Loading:', isLoading, 'Vendors:', localVendors.length);
+
+  useMemo(() => {
+    if (vendorsData?.items) {
+      setLocalVendors(vendorsData.items);
+    }
+  }, [vendorsData]);
 
   const filtered = useMemo(() => {
-    const byFilter = filter === 'all' ? vendors : vendors.filter((v) => (filter === 'active' ? v.active : !v.active));
+    const byFilter = filter === 'all' ? localVendors : localVendors.filter((v) => (filter === 'active' ? v.active : !v.active));
     const q = query.trim().toLowerCase();
     const byQuery = q
       ? byFilter.filter(
@@ -129,16 +115,50 @@ export default function VendorsScreen({
         )
       : byFilter;
     return sortVendors(byQuery, sortKey);
-  }, [vendors, filter, query, sortKey]);
+  }, [localVendors, filter, query, sortKey]);
 
   const isSearching = query.trim().length > 0;
   const isEmpty = filtered.length === 0;
-  const noVendorsAtAll = vendors.length === 0;
+  const noVendorsAtAll = localVendors.length === 0;
 
   const copyGst = async (vendorId: string, gst: string) => {
     await Clipboard.setStringAsync(gst);
     setCopiedId(vendorId);
     setTimeout(() => setCopiedId((current) => (current === vendorId ? null : current)), 1500);
+  };
+
+  const handleDeletePress = (vendorId: string) => {
+    console.log('[VendorsScreen] DELETE BUTTON PRESSED - vendorId:', vendorId);
+    console.log('[VendorsScreen] Current deleteId state:', deleteId);
+    setDeleteId(vendorId);
+    console.log('[VendorsScreen] Set deleteId to:', vendorId);
+  };
+
+  const handleDeleteConfirm = async () => {
+    console.log('[VendorsScreen] handleDeleteConfirm called, deleteId:', deleteId);
+    if (!deleteId) {
+      console.log('[VendorsScreen] No deleteId, returning');
+      return;
+    }
+
+    try {
+      console.log('[VendorsScreen] Calling deleteVendor with ID:', deleteId);
+      await deleteVendor(deleteId);
+      console.log('[VendorsScreen] Delete succeeded');
+      setToastType('success');
+      setToastMessage('Vendor deleted successfully');
+      setToastVisible(true);
+      setDeleteId(null);
+      await refetch();
+    } catch (err: any) {
+      console.error('[VendorsScreen] Failed to delete vendor:', err);
+      console.error('[VendorsScreen] Error data:', err?.data);
+      const message = err?.data?.detail || err?.data?.message || err?.message || 'Failed to delete vendor';
+      setToastType('error');
+      setToastMessage(message);
+      setToastVisible(true);
+      setDeleteId(null);
+    }
   };
 
   return (
@@ -231,14 +251,15 @@ export default function VendorsScreen({
                 copied={copiedId === item.id}
                 onToggle={() => setExpandedId((current) => (current === item.id ? null : item.id))}
                 onCopyGst={() => item.gstNumber && copyGst(item.id, item.gstNumber)}
-                onDelete={() => setVendors((current) => current.filter((v) => v.id !== item.id))}
+                onDelete={() => handleDeletePress(item.id)}
+                onEdit={() => onAddVendor(item.id)}
               />
             )}
           />
         )}
       </View>
 
-      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={onAddVendor}>
+      <Pressable style={[styles.fab, { bottom: insets.bottom + space[6] }]} onPress={() => onAddVendor()}>
         <Plus size={24} color={theme.textOnBrand} strokeWidth={2.25} />
       </Pressable>
 
@@ -251,12 +272,46 @@ export default function VendorsScreen({
         }}
         onClose={() => setSortSheetOpen(false)}
       />
+
+      <Modal visible={!!deleteId} transparent animationType="fade" onRequestClose={() => setDeleteId(null)}>
+        <Pressable style={styles.dialogOverlay} onPress={() => setDeleteId(null)}>
+          <View style={styles.dialogBox}>
+            <Text style={styles.dialogTitle}>Delete vendor?</Text>
+            <Text style={styles.dialogMessage}>This action cannot be undone.</Text>
+            <View style={styles.dialogButtonRow}>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonCancel]}
+                onPress={() => setDeleteId(null)}
+                disabled={isDeleting}
+              >
+                <Text style={styles.dialogButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.dialogButton, styles.dialogButtonDelete]}
+                onPress={handleDeleteConfirm}
+                disabled={isDeleting}
+              >
+                <Text style={[styles.dialogButtonText, styles.dialogButtonDeleteText]}>
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </Pressable>
+      </Modal>
+
+      <Toast
+        visible={toastVisible}
+        message={toastMessage}
+        type={toastType}
+        onHide={() => setToastVisible(false)}
+      />
     </SafeAreaView>
   );
 }
 
 function VendorCard({
-  vendor, expanded, copied, onToggle, onCopyGst, onDelete,
+  vendor, expanded, copied, onToggle, onCopyGst, onDelete, onEdit,
 }: {
   vendor: Vendor;
   expanded: boolean;
@@ -264,8 +319,10 @@ function VendorCard({
   onToggle: () => void;
   onCopyGst: () => void;
   onDelete: () => void;
+  onEdit: () => void;
 }) {
   const canDelete = vendor.inUseCount === 0;
+  console.log('[VendorCard] Rendering vendor:', vendor.name, 'canDelete:', canDelete, 'inUseCount:', vendor.inUseCount);
 
   return (
     <View style={styles.card}>
@@ -342,12 +399,18 @@ function VendorCard({
             <Text style={styles.detailValue}>{vendor.createdAt}</Text>
           </View>
           <View style={styles.actionRow}>
-            <Pressable style={styles.actionButton}>
+            <Pressable style={styles.actionButton} onPress={() => onEdit()}>
               <Pencil size={14} color={theme.textPrimary} strokeWidth={1.75} />
               <Text style={styles.actionButtonText}>Edit</Text>
             </Pressable>
             {canDelete ? (
-              <Pressable style={styles.actionButton} onPress={onDelete}>
+              <Pressable
+                style={styles.actionButton}
+                onPress={() => {
+                  console.log('[VendorCard] DELETE BUTTON PRESSED - calling onDelete for:', vendor.name);
+                  onDelete();
+                }}
+              >
                 <Trash2 size={14} color={theme.statusDanger} strokeWidth={1.75} />
                 <Text style={[styles.actionButtonText, { color: theme.statusDanger }]}>Delete</Text>
               </Pressable>
@@ -402,101 +465,3 @@ function SortSheet({
     </Modal>
   );
 }
-
-const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: theme.bgPage },
-  header: { flexDirection: 'row', alignItems: 'center', gap: space[2], paddingHorizontal: space[6] - 10 },
-  backButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-
-  searchRow: { flexDirection: 'row', gap: space[2], marginTop: space[3], paddingHorizontal: space[6] },
-  searchBar: {
-    flex: 1, height: 44, paddingHorizontal: space[3], backgroundColor: theme.bgRaised,
-    borderWidth: 1, borderColor: theme.borderDefault, borderRadius: radius.md,
-    flexDirection: 'row', alignItems: 'center', gap: space[2],
-  },
-  searchBarActive: { borderColor: theme.brandDefault },
-  searchInput: { flex: 1, fontSize: 15, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, padding: 0 },
-  sortButton: {
-    width: 44, height: 44, backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderDefault,
-    borderRadius: radius.md, alignItems: 'center', justifyContent: 'center',
-  },
-
-  chipRow: { marginTop: space[3], flexGrow: 0 },
-  chipRowContent: { gap: space[2], paddingHorizontal: space[6], paddingBottom: space[2] },
-  chip: {
-    height: 28, paddingHorizontal: space[3], borderRadius: radius.full, borderWidth: 1,
-    borderColor: theme.borderDefault, backgroundColor: theme.bgRaised, alignItems: 'center', justifyContent: 'center',
-  },
-  chipActive: { borderColor: theme.brandDefault, backgroundColor: theme.brandSubtle },
-  chipText: { fontSize: 13, fontFamily: 'Urbanist_500Medium', color: theme.textPrimary },
-  chipTextActive: { fontFamily: 'Urbanist_600SemiBold', color: theme.brandActive },
-
-  contentContainer: { flex: 1 },
-  listContent: { paddingHorizontal: space[6], paddingTop: space[4], paddingBottom: 112 },
-
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space[6], gap: space[2] },
-  emptyTitle: { fontSize: 14, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, marginTop: space[2], textAlign: 'center' },
-  emptyTitleLg: { fontSize: 15 },
-  emptySubtitle: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary, textAlign: 'center' },
-
-  card: { backgroundColor: theme.bgRaised, borderWidth: 1, borderColor: theme.borderSubtle, borderRadius: radius.lg, padding: space[4] },
-  cardTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[3] },
-  cardTitleRow: { flexDirection: 'row', alignItems: 'center', gap: space[2], flex: 1, minWidth: 0 },
-  cardTitle: { fontSize: 15, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary, flexShrink: 1 },
-  cardCode: {
-    fontSize: 11, fontFamily: 'Urbanist_600SemiBold', color: theme.textSecondary, backgroundColor: theme.bgSunken,
-    height: 18, paddingHorizontal: space[1] + 2, borderRadius: radius.sm, textAlignVertical: 'center',
-    fontVariant: ['tabular-nums'],
-  },
-  chevronUp: { transform: [{ rotate: '180deg' }] },
-  cardMidRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space[3], marginTop: space[1] + 2 },
-  cityRow: { flexDirection: 'row', alignItems: 'center', gap: space[1] },
-  cityText: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
-  statusBadge: { height: 20, paddingHorizontal: space[2], borderRadius: radius.full, alignItems: 'center', justifyContent: 'center' },
-  statusBadgeActive: { backgroundColor: theme.statusSuccessBg },
-  statusBadgeInactive: { backgroundColor: theme.statusDangerBg },
-  statusBadgeText: { fontSize: 12, fontFamily: 'Urbanist_600SemiBold' },
-
-  details: { borderTopWidth: 1, borderTopColor: theme.borderSubtle, marginTop: space[3], paddingTop: space[3], gap: space[3] },
-  detailRow: {},
-  detailLabelRow: { flexDirection: 'row', alignItems: 'center', gap: space[1] },
-  detailLabel: { fontSize: 12, fontFamily: 'Urbanist_500Medium', color: theme.textTertiary },
-  detailValue: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary, marginTop: 2, fontVariant: ['tabular-nums'] },
-  detailValueMuted: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.textTertiary, marginTop: 2 },
-  linkRow: { flexDirection: 'row', alignItems: 'center', gap: space[1], marginTop: 2 },
-  linkText: { fontSize: 13, fontFamily: 'Urbanist_400Regular', color: theme.brandActive },
-  gstRow: { flexDirection: 'row', alignItems: 'center', gap: space[2], marginTop: 2 },
-  copyButton: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
-  copiedTooltip: {
-    position: 'absolute', left: 0, top: -32, backgroundColor: theme.textPrimary,
-    paddingHorizontal: space[2], paddingVertical: 4, borderRadius: radius.sm,
-  },
-  copiedTooltipText: { fontSize: 11, fontFamily: 'Urbanist_600SemiBold', color: theme.textInverse },
-
-  actionRow: { flexDirection: 'row', gap: space[2] },
-  actionButton: {
-    height: 32, paddingHorizontal: space[3], backgroundColor: theme.bgRaised, borderWidth: 1,
-    borderColor: theme.borderDefault, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: space[1] + 2,
-  },
-  actionButtonText: { fontSize: 13, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  inUseText: { fontSize: 12, fontFamily: 'Urbanist_400Regular', color: theme.textSecondary },
-
-  fab: {
-    position: 'absolute', right: space[5], width: 56, height: 56, borderRadius: radius.xl,
-    backgroundColor: theme.brandDefault, alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#080a0b', shadowOpacity: 0.1, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 4,
-  },
-
-  sheetRoot: { flex: 1, justifyContent: 'flex-end', backgroundColor: theme.bgOverlay },
-  sheet: { backgroundColor: theme.bgRaised, borderTopLeftRadius: radius.xl, borderTopRightRadius: radius.xl },
-  sheetHandleRow: { alignItems: 'center', paddingTop: space[3] },
-  sheetHandle: { width: 36, height: 4, borderRadius: radius.full, backgroundColor: theme.borderStrong },
-  sheetTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space[5], paddingTop: space[4] },
-  sheetTitle: { fontSize: 18, fontFamily: 'Urbanist_600SemiBold', color: theme.textPrimary },
-  sheetCloseButton: { width: 36, height: 36, borderRadius: radius.full, backgroundColor: theme.bgSunken, alignItems: 'center', justifyContent: 'center' },
-  sortRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space[3] + 2, minHeight: 44 },
-  sortRowDivider: { borderBottomWidth: 1, borderBottomColor: theme.borderSubtle },
-  sortRowText: { fontSize: 15, fontFamily: 'Urbanist_400Regular', color: theme.textPrimary },
-  sortRowTextActive: { fontFamily: 'Urbanist_600SemiBold' },
-});
